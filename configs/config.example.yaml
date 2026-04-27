@@ -1,0 +1,12 @@
+app:
+  name: quantsage
+  env: local
+  addr: ":8080"
+
+database:
+  dsn: postgres://quantsage:***@127.0.0.1:5432/quantsage?sslmode=disable
+
+redis:
+  addr: 127.0.0.1:6379
+  password: ""
+  db: 0

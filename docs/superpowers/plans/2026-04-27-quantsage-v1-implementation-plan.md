@@ -505,7 +505,7 @@ apps/server/internal/interfaces/http/dto/job.go
 - 新建：`deployments/docker-compose/docker-compose.yml`
 - 新建：`.golangci.yml`
 
-- [ ] **步骤 1：初始化 Go 模块**
+- [x] **步骤 1：初始化 Go 模块**
 
 运行：
 
@@ -516,7 +516,7 @@ go mod init github.com/lifei6671/quantsage/apps/server
 
 预期：`apps/server/go.mod` 存在，且 模块路径 与上方一致。
 
-- [ ] **步骤 2：添加已审批的 Go 依赖**
+- [x] **步骤 2：添加已审批的 Go 依赖**
 
 依赖审批后运行：
 
@@ -527,7 +527,7 @@ go get github.com/gin-gonic/gin github.com/gin-contrib/sessions github.com/gin-c
 
 预期：依赖出现在 `go.mod` 中。
 
-- [ ] **步骤 3：创建 Server 和 Worker 入口**
+- [x] **步骤 3：创建 Server 和 Worker 入口**
 
 `apps/server/cmd/quantsage-server/main.go`:
 
@@ -553,7 +553,7 @@ func main() {
 }
 ```
 
-- [ ] **步骤 4：添加 Makefile**
+- [x] **步骤 4：添加 Makefile**
 
 `Makefile`:
 
@@ -585,7 +585,7 @@ migrate-down:
 	cd apps/server && goose -dir ../../migrations/postgres postgres "$$QUANTSAGE_DATABASE_DSN" down
 ```
 
-- [ ] **步骤 5：添加使用环境变量的 Docker Compose**
+- [x] **步骤 5：添加使用环境变量的 Docker Compose**
 
 `deployments/docker-compose/docker-compose.yml` 必须使用：
 
@@ -606,7 +606,7 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
 ```
 
-- [ ] **步骤 6：验证脚手架**
+- [x] **步骤 6：验证脚手架**
 
 运行：
 
@@ -635,7 +635,7 @@ make test
 - 新建：`apps/server/internal/interfaces/http/middleware/requestlog.go`
 - 修改：`apps/server/cmd/quantsage-server/main.go`
 
-- [ ] **步骤 1：实现配置加载器**
+- [x] **步骤 1：实现配置加载器**
 
 `config.Config` 必须包含：
 
@@ -665,7 +665,7 @@ QUANTSAGE_REDIS_ADDR
 QUANTSAGE_REDIS_PASSWORD
 ```
 
-- [ ] **步骤 2：实现 `apperror.AppError`**
+- [x] **步骤 2：实现 `apperror.AppError`**
 
 契约：
 
@@ -682,7 +682,7 @@ func MessageOf(code int) (errmsg string, toast string)
 
 `CodeOf(nil)` 返回 `CodeOK`；未知错误返回 `CodeInternal`。
 
-- [ ] **步骤 3：实现响应辅助函数**
+- [x] **步骤 3：实现响应辅助函数**
 
 契约：
 
@@ -693,7 +693,7 @@ func Fail(c *gin.Context, err error)
 
 `Fail` 必须将 HTTP status 设置为 `200`，并在 JSON body 中编码业务错误。
 
-- [ ] **步骤 4：实现 Gin router**
+- [x] **步骤 4：实现 Gin router**
 
 Router 必须注册：
 
@@ -707,7 +707,7 @@ GET /api/healthz
 {"code":0,"errmsg":"","toast":"","data":{"status":"ok"}}
 ```
 
-- [ ] **步骤 5：验证基础能力**
+- [x] **步骤 5：验证基础能力**
 
 运行：
 
