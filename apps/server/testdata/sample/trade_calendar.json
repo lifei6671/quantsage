@@ -1,0 +1,16 @@
+[
+  {
+    "exchange": "SSE",
+    "cal_date": "2026-04-27",
+    "is_open": true,
+    "pretrade_date": "2026-04-24",
+    "source": "sample"
+  },
+  {
+    "exchange": "SSE",
+    "cal_date": "2026-04-28",
+    "is_open": true,
+    "pretrade_date": "2026-04-27",
+    "source": "sample"
+  }
+]

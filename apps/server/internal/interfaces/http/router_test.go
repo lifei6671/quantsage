@@ -49,6 +49,21 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
+func TestNewRouterDoesNotExposeBusinessRoutes(t *testing.T) {
+	t.Parallel()
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	router := NewRouter(logger)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/stocks", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status code = %d, want %d", recorder.Code, http.StatusNotFound)
+	}
+}
+
 func TestRequestLogIncludesContextFields(t *testing.T) {
 	t.Parallel()
 
@@ -74,5 +89,23 @@ func TestRequestLogIncludesContextFields(t *testing.T) {
 	}
 	if !bytes.Contains(buf.Bytes(), []byte(`"status":200`)) {
 		t.Fatalf("log output = %q, want status field", buf.String())
+	}
+}
+
+func TestCORSPreflight(t *testing.T) {
+	t.Parallel()
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	router := NewRouter(logger)
+
+	req := httptest.NewRequest(http.MethodOptions, "/api/healthz", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status code = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+	if got := recorder.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want %q", got, "*")
 	}
 }

@@ -6,80 +6,7 @@ package dbgen
 
 import (
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/pgvector/pgvector-go"
 )
-
-type AdjFactor struct {
-	TsCode    string
-	TradeDate pgtype.Date
-	AdjFactor pgtype.Numeric
-	Source    string
-	CreatedAt pgtype.Timestamptz
-	UpdatedAt pgtype.Timestamptz
-}
-
-type AiStockAnalysis struct {
-	ID            int64
-	TsCode        string
-	AnalysisDate  pgtype.Date
-	AnalysisType  string
-	PromptVersion string
-	Conclusion    string
-	Evidence      []byte
-	Risks         []byte
-	CreatedAt     pgtype.Timestamptz
-}
-
-type Announcement struct {
-	ID               int64
-	TsCode           pgtype.Text
-	Title            string
-	AnnouncementType string
-	PublishTime      pgtype.Timestamptz
-	Source           string
-	SourceUrl        pgtype.Text
-	ObjectKey        pgtype.Text
-	ContentHash      pgtype.Text
-	CreatedAt        pgtype.Timestamptz
-}
-
-type DocumentChunk struct {
-	ID           int64
-	DocumentType string
-	DocumentID   int64
-	ChunkIndex   int32
-	Content      string
-	Meta         []byte
-	CreatedAt    pgtype.Timestamptz
-}
-
-type DocumentEmbedding struct {
-	ChunkID        int64
-	Embedding      pgvector.Vector
-	EmbeddingModel string
-	CreatedAt      pgtype.Timestamptz
-}
-
-type FinancialIndicator struct {
-	TsCode          string
-	ReportPeriod    pgtype.Date
-	AnnDate         pgtype.Date
-	EndDate         pgtype.Date
-	Eps             pgtype.Numeric
-	DilutedEps      pgtype.Numeric
-	Roe             pgtype.Numeric
-	Roa             pgtype.Numeric
-	GrossMargin     pgtype.Numeric
-	NetProfitMargin pgtype.Numeric
-	DebtToAssets    pgtype.Numeric
-	CurrentRatio    pgtype.Numeric
-	RevenueYoy      pgtype.Numeric
-	ProfitYoy       pgtype.Numeric
-	Source          string
-	Version         string
-	CreatedAt       pgtype.Timestamptz
-	UpdatedAt       pgtype.Timestamptz
-}
 
 type JobRunLog struct {
 	ID              int64
@@ -95,16 +22,6 @@ type JobRunLog struct {
 	ProgressTotal   int32
 	Meta            []byte
 	CreatedAt       pgtype.Timestamptz
-}
-
-type Position struct {
-	ID           int64
-	TsCode       string
-	PositionDate pgtype.Date
-	Quantity     pgtype.Numeric
-	CostPrice    pgtype.Numeric
-	Note         string
-	CreatedAt    pgtype.Timestamptz
 }
 
 type StockBasic struct {
@@ -141,99 +58,4 @@ type StockDaily struct {
 	SourceUpdatedAt pgtype.Timestamptz
 	CreatedAt       pgtype.Timestamptz
 	UpdatedAt       pgtype.Timestamptz
-}
-
-type StockEventTag struct {
-	ID          int64
-	TsCode      string
-	TradeDate   pgtype.Date
-	EventType   string
-	EventLevel  string
-	Score       pgtype.Numeric
-	Description string
-	Meta        []byte
-	Version     string
-	CreatedAt   pgtype.Timestamptz
-}
-
-type StockFactorDaily struct {
-	TsCode           string
-	TradeDate        pgtype.Date
-	Ma5              pgtype.Numeric
-	Ma10             pgtype.Numeric
-	Ma20             pgtype.Numeric
-	Ma60             pgtype.Numeric
-	Ema12            pgtype.Numeric
-	Ema26            pgtype.Numeric
-	MacdDif          pgtype.Numeric
-	MacdDea          pgtype.Numeric
-	MacdHist         pgtype.Numeric
-	Rsi6             pgtype.Numeric
-	Rsi12            pgtype.Numeric
-	Rsi24            pgtype.Numeric
-	VolumeMa5        pgtype.Numeric
-	VolumeMa20       pgtype.Numeric
-	VolumeRatio      pgtype.Numeric
-	Amplitude        pgtype.Numeric
-	UpperShadowRatio pgtype.Numeric
-	LowerShadowRatio pgtype.Numeric
-	CloseAboveMa5    pgtype.Bool
-	CloseAboveMa10   pgtype.Bool
-	CloseAboveMa20   pgtype.Bool
-	MaBullish        pgtype.Bool
-	VolumeBreakout   pgtype.Bool
-	PriceBreakout20  pgtype.Bool
-	FactorVersion    string
-	CreatedAt        pgtype.Timestamptz
-	UpdatedAt        pgtype.Timestamptz
-}
-
-type StrategyDefinition struct {
-	ID           int64
-	StrategyCode string
-	StrategyName string
-	StrategyType string
-	Description  pgtype.Text
-	Config       []byte
-	Enabled      bool
-	Version      string
-	CreatedAt    pgtype.Timestamptz
-	UpdatedAt    pgtype.Timestamptz
-}
-
-type StrategySignal struct {
-	ID                    int64
-	StrategyCode          string
-	StrategyVersion       string
-	TsCode                string
-	TradeDate             pgtype.Date
-	SignalType            string
-	SignalStrength        pgtype.Numeric
-	SignalLevel           string
-	BuyPriceRef           pgtype.Numeric
-	StopLossRef           pgtype.Numeric
-	TakeProfitRef         pgtype.Numeric
-	InvalidationCondition pgtype.Text
-	Reason                string
-	InputSnapshot         []byte
-	Meta                  []byte
-	CreatedAt             pgtype.Timestamptz
-}
-
-type TradeCalendar struct {
-	Exchange     string
-	CalDate      pgtype.Date
-	IsOpen       bool
-	PretradeDate pgtype.Date
-	Source       string
-	CreatedAt    pgtype.Timestamptz
-	UpdatedAt    pgtype.Timestamptz
-}
-
-type Watchlist struct {
-	ID        int64
-	Name      string
-	TsCode    string
-	Note      string
-	CreatedAt pgtype.Timestamptz
 }

@@ -553,6 +553,8 @@ func main() {
 }
 ```
 
+补充约束：server / worker 的默认 `-config` 路径需要同时兼容仓库根目录运行和 `cd apps/server` 运行，至少要覆盖 `configs/config.example.yaml` 与 `../../configs/config.example.yaml` 两种候选位置。
+
 - [x] **步骤 4：添加 Makefile**
 
 `Makefile`:
@@ -731,11 +733,11 @@ go build ./...
 - 新建：`apps/server/sql/queries/jobs.sql`
 - 修改：`apps/server/sqlc.yaml`
 
-- [ ] **步骤 1：添加迁移 DDL**
+- [x] **步骤 1：添加迁移 DDL**
 
 使用第 4 节中的精确 schema 契约。
 
-- [ ] **步骤 2：添加 sqlc 配置**
+- [x] **步骤 2：添加 sqlc 配置**
 
 `apps/server/sqlc.yaml`:
 
@@ -743,7 +745,7 @@ go build ./...
 version: "2"
 sql:
   - engine: "postgresql"
-    schema: "../../migrations/postgres"
+    schema: "sql/schema/schema.sql"
     queries: "sql/queries"
     gen:
       go:
@@ -752,7 +754,7 @@ sql:
         sql_package: "pgx/v5"
 ```
 
-- [ ] **步骤 3：添加股票查询 SQL**
+- [x] **步骤 3：添加股票查询 SQL**
 
 `apps/server/sql/queries/stocks.sql`:
 
@@ -776,7 +778,7 @@ WHERE ts_code = $1 AND trade_date BETWEEN $2 AND $3
 ORDER BY trade_date;
 ```
 
-- [ ] **步骤 4：生成 sqlc 代码**
+- [x] **步骤 4：生成 sqlc 代码**
 
 运行：
 
@@ -801,7 +803,7 @@ sqlc generate
 - 新建：`apps/server/testdata/sample/trade_calendar.json`
 - 新建：`apps/server/testdata/sample/stock_daily.json`
 
-- [ ] **步骤 1：定义数据源契约**
+- [x] **步骤 1：定义数据源契约**
 
 ```go
 type StockBasic struct {
@@ -838,7 +840,7 @@ type Source interface {
 }
 ```
 
-- [ ] **步骤 2：实现样例数据源**
+- [x] **步骤 2：实现样例数据源**
 
 样例数据源读取本地 JSON 文件，并为以下股票返回确定性数据：
 
@@ -848,11 +850,11 @@ type Source interface {
 300750.SZ 宁德时代
 ```
 
-- [ ] **步骤 3：实现 Tushare 未启用行为**
+- [x] **步骤 3：实现 Tushare 未启用行为**
 
 如果 `TUSHARE_TOKEN` 为空，Tushare 数据源返回 `CodeDatasourceUnavailable`，错误消息为 `tushare token is empty`。
 
-- [ ] **步骤 4：实现导入任务**
+- [x] **步骤 4：实现导入任务**
 
 每个导入任务必须：
 
@@ -861,7 +863,9 @@ type Source interface {
 3. 完成后将状态设置为 `success`。
 4. 失败时将状态设置为 `failed`，并记录包装后的错误。
 
-- [ ] **步骤 5：验证数据源**
+local sample runtime 里同一 `job_name + biz_date` 不允许并发保留多条 `running` 记录；若重复触发，应立即报错，避免任务状态串写。
+
+- [x] **步骤 5：验证数据源**
 
 运行：
 
@@ -882,7 +886,7 @@ go test -timeout 120s ./internal/domain/datasource/... ./internal/domain/job/...
 - 新建：`apps/server/internal/domain/stock/service.go`
 - 修改：`apps/server/internal/interfaces/http/router.go`
 
-- [ ] **步骤 1：定义分页 DTO**
+- [x] **步骤 1：定义分页 DTO**
 
 ```go
 type PageRequest struct {
@@ -897,7 +901,7 @@ type PageResponse[T any] struct {
 }
 ```
 
-- [ ] **步骤 2：定义股票 DTO**
+- [x] **步骤 2：定义股票 DTO**
 
 ```go
 type StockItem struct {
@@ -922,7 +926,7 @@ type DailyBarItem struct {
 }
 ```
 
-- [ ] **步骤 3：注册接口**
+- [x] **步骤 3：注册接口**
 
 ```text
 GET /api/stocks
@@ -930,7 +934,7 @@ GET /api/stocks/:ts_code
 GET /api/stocks/:ts_code/daily
 ```
 
-- [ ] **步骤 4：验证 API 测试**
+- [x] **步骤 4：验证 API 测试**
 
 运行：
 
@@ -950,7 +954,7 @@ go test -timeout 120s ./internal/interfaces/http/...
 - 新建：`apps/server/internal/domain/indicator/calculator_test.go`
 - 新建：`apps/server/internal/domain/job/calc_daily_factor.go`
 
-- [ ] **步骤 1：实现纯计算器**
+- [x] **步骤 1：实现纯计算器**
 
 公开方法：
 
@@ -964,10 +968,10 @@ func CalculateDailyFactors(bars []marketdata.DailyBar) ([]DailyFactor, error)
 2. MA 使用简单移动平均。
 3. EMA 使用标准平滑系数 `2/(n+1)`。
 4. MACD 使用 EMA12、EMA26、DEA9。
-5. 当分母为零时，RSI 返回空值。
+5. 当窗口内无涨无跌时，RSI 返回空值；当窗口内全涨无跌时，RSI 返回 `100`。
 6. 影线比例使用 `(high - max(open, close)) / (high - low)` 和 `(min(open, close) - low) / (high - low)`。
 
-- [ ] **步骤 2：添加表驱动测试**
+- [x] **步骤 2：添加表驱动测试**
 
 测试必须覆盖：
 
@@ -979,7 +983,7 @@ volume_ratio 计算
 输入未排序时返回错误
 ```
 
-- [ ] **步骤 3：实现因子计算任务**
+- [x] **步骤 3：实现因子计算任务**
 
 任务按日期范围读取 `stock_daily`，按股票计算因子，并写入或更新到 `stock_factor_daily`。
 
@@ -994,7 +998,7 @@ volume_ratio 计算
 - 新建：`apps/server/internal/domain/strategy/volume_breakout_test.go`
 - 新建：`apps/server/internal/domain/job/generate_strategy_signals.go`
 
-- [ ] **步骤 1：定义策略结果**
+- [x] **步骤 1：定义策略结果**
 
 ```go
 type SignalResult struct {
@@ -1014,7 +1018,7 @@ type SignalResult struct {
 }
 ```
 
-- [ ] **步骤 2：实现放量突破策略**
+- [x] **步骤 2：实现放量突破策略**
 
 触发条件：
 
@@ -1035,7 +1039,7 @@ score >= 40 => C
 otherwise => D
 ```
 
-- [ ] **步骤 3：实现趋势破位策略**
+- [x] **步骤 3：实现趋势破位策略**
 
 触发条件：
 
@@ -1044,7 +1048,7 @@ close < ma20
 volume > volume_ma20 * 1.2
 ```
 
-- [ ] **步骤 4：验证策略测试**
+- [x] **步骤 4：验证策略测试**
 
 运行：
 
@@ -1066,7 +1070,7 @@ go test -timeout 120s ./internal/domain/strategy/...
 - 修改：`apps/server/cmd/quantsage-worker/main.go`
 - 修改：`apps/server/internal/interfaces/http/router.go`
 
-- [ ] **步骤 1：定义任务执行器契约**
+- [x] **步骤 1：定义任务执行器契约**
 
 ```go
 type Runner interface {
@@ -1074,7 +1078,7 @@ type Runner interface {
 }
 ```
 
-- [ ] **步骤 2：注册 V1 任务**
+- [x] **步骤 2：注册 V1 任务**
 
 ```text
 sync_stock_basic
@@ -1084,7 +1088,27 @@ calc_daily_factor
 generate_strategy_signals
 ```
 
-- [ ] **步骤 3：添加手动触发接口**
+`quantsage-worker` 在 local 模式下注册固定工作日 cron。独立任务单独触发；日线行情、因子和策略信号必须由一个本地 pipeline 任务顺序触发，不能依赖固定分钟间隔串联，避免上游任务耗时超过间隔后下游任务被拒绝且当天不再重试。
+
+```text
+sync_stock_basic       0 0 8 * * 1-5
+sync_trade_calendar    0 5 8 * * 1-5
+daily_market_pipeline  0 0 18 * * 1-5
+```
+
+`daily_market_pipeline` 只存在于 worker 本地调度层，触发后按顺序调用 server 的手动任务 API：`sync_daily_market` → `calc_daily_factor` → `generate_strategy_signals`。任一步失败时停止后续步骤并记录该 pipeline 调度失败。
+
+worker 调用 server 手动任务 API 时必须使用任务级超时，不能使用 10 秒级的普通 HTTP 短超时；V1 local runner 的单步请求超时为 30 分钟，避免较慢的数据导入或因子计算被客户端提前中断。
+
+cron 触发后传入任务执行器的 `bizDate` 必须先归一化为 UTC 日期（`00:00:00Z`），不能直接把带时分秒的 `time.Now()` 传给按交易日过滤的数据源或 sample runtime。
+
+local 模式下，worker 不再单独持有一份 sample runtime；它只负责 cron 调度，并通过 `POST /api/jobs/:job_name/run` 调用 server 进程里的唯一 runtime。否则 server 与 worker 各自维护独立内存态时，UI 和任务查询接口将看不到 cron 执行后的结果。
+
+注册完成后必须启动 scheduler 并保持进程常驻，直到收到退出信号。
+
+任务执行器除了保证同名任务串行外，还必须维护前置成功状态与运行中互斥：`calc_daily_factor` 依赖 `sync_daily_market`，`generate_strategy_signals` 依赖 `sync_daily_market` 与 `calc_daily_factor`。后置任务只有在前置任务已成功完成且当前未运行时才能开始；如果前置尚未完成则直接拒绝，如果同日及更早日期的前置任务正在运行，也必须拒绝后置任务启动。上游任务按较早 `biz_date` 回补成功后，必须使同日及之后的下游完成态失效；同理，若同日及之后的下游任务正在运行，也必须拒绝上游回补，避免读取或覆盖半成品内存态。
+
+- [x] **步骤 3：添加手动触发接口**
 
 ```text
 POST /api/jobs/:job_name/run
@@ -1102,6 +1126,10 @@ POST /api/jobs/:job_name/run
 {"code":0,"errmsg":"","toast":"","data":{"job_name":"sync_daily_market","status":"queued"}}
 ```
 
+基础 `NewRouter(...)` 仅暴露 `/api/healthz`；股票、任务、信号等业务接口只在显式注入依赖的路由构造函数中注册，避免在未装配服务时暴露空实现接口。
+
+前端任务中心在任一手动任务提交期间必须暂时禁用整组任务按钮，避免 `sync_daily_market`、`calc_daily_factor`、`generate_strategy_signals` 被用户并发点选后，以错误顺序覆盖内存态结果。
+
 ### 任务 9：信号 API
 
 **文件：**
@@ -1111,7 +1139,7 @@ POST /api/jobs/:job_name/run
 - 新建：`apps/server/internal/domain/strategy/query_service.go`
 - 修改：`apps/server/internal/interfaces/http/router.go`
 
-- [ ] **步骤 1：定义信号 DTO**
+- [x] **步骤 1：定义信号 DTO**
 
 ```go
 type SignalItem struct {
@@ -1130,7 +1158,7 @@ type SignalItem struct {
 }
 ```
 
-- [ ] **步骤 2：注册接口**
+- [x] **步骤 2：注册接口**
 
 ```text
 GET /api/signals?trade_date=2026-04-27&strategy_code=volume_breakout_v1&page=1&page_size=20
@@ -1149,7 +1177,7 @@ GET /api/signals?trade_date=2026-04-27&strategy_code=volume_breakout_v1&page=1&p
 - 新建：`apps/web/src/pages/signals/SignalListPage.tsx`
 - 新建：`apps/web/src/pages/jobs/JobListPage.tsx`
 
-- [ ] **步骤 1：初始化 Vite React 应用**
+- [x] **步骤 1：初始化 Vite React 应用**
 
 运行：
 
@@ -1159,31 +1187,36 @@ npm create vite@latest . -- --template react-ts
 npm install
 ```
 
-- [ ] **步骤 2：添加 API 客户端**
+- [x] **步骤 2：添加 API 客户端**
 
 `api.ts` 只在 `code === 0` 时解包；否则抛出包含 `code`、`errmsg`、`toast` 的错误对象。
 
-- [ ] **步骤 3：构建页面**
+- [x] **步骤 3：构建页面**
 
 页面：
 
 ```text
-/stocks       股票列表
-/stocks/:id   个股日线
-/signals      策略信号列表
-/jobs         任务状态列表
+#/stocks       股票列表
+#/stocks/:id   个股日线
+#/signals      策略信号列表
+#/jobs         任务状态列表
 ```
 
-- [ ] **步骤 4：验证前端**
+前端在当前阶段使用 `HashRouter`，避免在没有服务端 SPA fallback 的部署形态下刷新详情页直接命中 404。
+
+手动任务触发成功后，前端必须主动失效股票列表、个股日线和策略信号相关的 React Query 缓存，避免用户返回页面时继续看到 30 秒 staleTime 内的旧数据。
+
+- [x] **步骤 4：验证前端**
 
 运行：
 
 ```bash
 cd apps/web
 npm run build
+npm run preview
 ```
 
-预期：生产构建成功。
+预期：生产构建成功，且前端默认继续请求同源 `/api/*`；`preview` 模式下这些请求仍会代理到 `http://127.0.0.1:8080`。如果前后端分开部署，需要通过 `VITE_API_BASE_URL` 显式覆盖 API 基地址。
 
 ### 任务 11：本地端到端冒烟测试
 

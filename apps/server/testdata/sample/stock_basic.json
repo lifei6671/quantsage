@@ -1,0 +1,35 @@
+[
+  {
+    "ts_code": "000001.SZ",
+    "symbol": "000001",
+    "name": "平安银行",
+    "area": "深圳",
+    "industry": "银行",
+    "market": "主板",
+    "exchange": "SZSE",
+    "list_date": "1991-04-03",
+    "source": "sample"
+  },
+  {
+    "ts_code": "600519.SH",
+    "symbol": "600519",
+    "name": "贵州茅台",
+    "area": "贵州",
+    "industry": "白酒",
+    "market": "主板",
+    "exchange": "SSE",
+    "list_date": "2001-08-27",
+    "source": "sample"
+  },
+  {
+    "ts_code": "300750.SZ",
+    "symbol": "300750",
+    "name": "宁德时代",
+    "area": "福建",
+    "industry": "电池",
+    "market": "创业板",
+    "exchange": "SZSE",
+    "list_date": "2018-06-11",
+    "source": "sample"
+  }
+]
