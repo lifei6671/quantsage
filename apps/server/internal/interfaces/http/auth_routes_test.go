@@ -15,15 +15,25 @@ import (
 
 	jobdomain "github.com/lifei6671/quantsage/apps/server/internal/domain/job"
 	userdomain "github.com/lifei6671/quantsage/apps/server/internal/domain/user"
+	"github.com/lifei6671/quantsage/apps/server/internal/pkg/apperror"
 )
 
-type fakeAuthUserService struct{}
+type fakeAuthUserService struct {
+	getByIDFunc      func(ctx context.Context, userID int64) (userdomain.User, error)
+	authenticateFunc func(ctx context.Context, username, password string) (userdomain.User, error)
+}
 
-func (fakeAuthUserService) GetByID(ctx context.Context, userID int64) (userdomain.User, error) {
+func (f fakeAuthUserService) GetByID(ctx context.Context, userID int64) (userdomain.User, error) {
+	if f.getByIDFunc != nil {
+		return f.getByIDFunc(ctx, userID)
+	}
 	return userdomain.User{ID: userID, Username: "admin", Status: "active"}, nil
 }
 
-func (fakeAuthUserService) Authenticate(ctx context.Context, username, password string) (userdomain.User, error) {
+func (f fakeAuthUserService) Authenticate(ctx context.Context, username, password string) (userdomain.User, error) {
+	if f.authenticateFunc != nil {
+		return f.authenticateFunc(ctx, username, password)
+	}
 	return userdomain.User{}, errors.New("not implemented")
 }
 
@@ -47,6 +57,113 @@ func TestAuthEnabledProtectsSharedRoutes(t *testing.T) {
 	router.ServeHTTP(recorder, req)
 
 	assertResponseJSON(t, recorder, `{"code":401001,"errmsg":"unauthorized","toast":"请先登录","data":{}}`)
+}
+
+func TestAuthLoginSuccessRestoresCurrentUser(t *testing.T) {
+	t.Parallel()
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	router := NewRouterWithRuntime(logger, RouterDependencies{
+		UserService: fakeAuthUserService{
+			authenticateFunc: func(ctx context.Context, username, password string) (userdomain.User, error) {
+				if username != "admin" || password != "admin123" {
+					return userdomain.User{}, apperror.New(apperror.CodeUnauthorized, errors.New("invalid credentials"))
+				}
+				return userdomain.User{ID: 7, Username: "admin", DisplayName: "管理员", Status: "active", Role: "admin"}, nil
+			},
+			getByIDFunc: func(ctx context.Context, userID int64) (userdomain.User, error) {
+				return userdomain.User{ID: userID, Username: "admin", DisplayName: "管理员", Status: "active", Role: "admin"}, nil
+			},
+		},
+		SessionStore: cookie.NewStore([]byte("test-secret")),
+		SessionName:  "test_session",
+	})
+
+	loginRecorder := httptest.NewRecorder()
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"username":"admin","password":"admin123"}`))
+	loginReq.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(loginRecorder, loginReq)
+
+	assertResponseJSON(t, loginRecorder, `{"code":0,"errmsg":"","toast":"","data":{"id":7,"username":"admin","display_name":"管理员","status":"active","role":"admin"}}`)
+	sessionCookie := loginRecorder.Header().Get("Set-Cookie")
+	if sessionCookie == "" {
+		t.Fatal("login response did not set session cookie")
+	}
+
+	meRecorder := httptest.NewRecorder()
+	meReq := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
+	meReq.Header.Set("Cookie", sessionCookie)
+	router.ServeHTTP(meRecorder, meReq)
+
+	assertResponseJSON(t, meRecorder, `{"code":0,"errmsg":"","toast":"","data":{"id":7,"username":"admin","display_name":"管理员","status":"active","role":"admin"}}`)
+}
+
+func TestAuthLoginRejectsWrongPassword(t *testing.T) {
+	t.Parallel()
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	router := NewRouterWithRuntime(logger, RouterDependencies{
+		UserService: fakeAuthUserService{
+			authenticateFunc: func(ctx context.Context, username, password string) (userdomain.User, error) {
+				return userdomain.User{}, apperror.New(apperror.CodeUnauthorized, errors.New("invalid credentials"))
+			},
+		},
+		SessionStore: cookie.NewStore([]byte("test-secret")),
+		SessionName:  "test_session",
+	})
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"username":"admin","password":"wrong"}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, req)
+
+	assertResponseJSON(t, recorder, `{"code":401001,"errmsg":"unauthorized","toast":"请先登录","data":{}}`)
+	if sessionCookie := recorder.Header().Get("Set-Cookie"); sessionCookie != "" {
+		t.Fatalf("login failure unexpectedly set session cookie: %s", sessionCookie)
+	}
+}
+
+func TestAuthLogoutInvalidatesSession(t *testing.T) {
+	t.Parallel()
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	router := NewRouterWithRuntime(logger, RouterDependencies{
+		UserService: fakeAuthUserService{
+			authenticateFunc: func(ctx context.Context, username, password string) (userdomain.User, error) {
+				return userdomain.User{ID: 7, Username: "admin", DisplayName: "管理员", Status: "active", Role: "admin"}, nil
+			},
+			getByIDFunc: func(ctx context.Context, userID int64) (userdomain.User, error) {
+				return userdomain.User{ID: userID, Username: "admin", DisplayName: "管理员", Status: "active", Role: "admin"}, nil
+			},
+		},
+		SessionStore: cookie.NewStore([]byte("test-secret")),
+		SessionName:  "test_session",
+	})
+
+	loginRecorder := httptest.NewRecorder()
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"username":"admin","password":"admin123"}`))
+	loginReq.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(loginRecorder, loginReq)
+	sessionCookie := loginRecorder.Header().Get("Set-Cookie")
+	if sessionCookie == "" {
+		t.Fatal("login response did not set session cookie")
+	}
+
+	logoutRecorder := httptest.NewRecorder()
+	logoutReq := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
+	logoutReq.Header.Set("Cookie", sessionCookie)
+	router.ServeHTTP(logoutRecorder, logoutReq)
+	assertResponseJSON(t, logoutRecorder, `{"code":0,"errmsg":"","toast":"","data":{"status":"ok"}}`)
+	clearedCookie := logoutRecorder.Header().Get("Set-Cookie")
+	if clearedCookie == "" {
+		t.Fatal("logout response did not persist cleared session cookie")
+	}
+
+	meRecorder := httptest.NewRecorder()
+	meReq := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
+	meReq.Header.Set("Cookie", clearedCookie)
+	router.ServeHTTP(meRecorder, meReq)
+	assertResponseJSON(t, meRecorder, `{"code":401001,"errmsg":"unauthorized","toast":"请先登录","data":{}}`)
 }
 
 func TestInternalJobRunAllowsLoopbackWithoutSession(t *testing.T) {

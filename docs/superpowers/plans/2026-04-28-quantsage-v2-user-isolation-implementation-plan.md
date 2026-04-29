@@ -55,7 +55,7 @@ docs/architecture/v1-local-runbook.md
 - 修改：`migrations/postgres/000002_core_schema.sql`
 - 修改：`docs/superpowers/specs/ai_stock_analysis_database_technical_proposal.md`
 
-- [ ] **步骤 1：新增用户私有表**
+- [x] **步骤 1：新增用户私有表**
 
 在 `000002_core_schema.sql` 中新增：
 
@@ -71,7 +71,7 @@ docs/architecture/v1-local-runbook.md
 3. `watchlist_item` 对 `(group_id, ts_code)` 唯一。
 4. `user_position` 通过 `user_id + ts_code + position_date` 支持用户独立持仓录入。
 
-- [ ] **步骤 2：删除旧的扁平业务表定义**
+- [x] **步骤 2：删除旧的扁平业务表定义**
 
 从 schema 中移除或替换旧的：
 
@@ -80,7 +80,7 @@ docs/architecture/v1-local-runbook.md
 
 说明：当前仍在开发阶段，不保留兼容结构。
 
-- [ ] **步骤 3：补充必要索引与注释**
+- [x] **步骤 3：补充必要索引与注释**
 
 至少补：
 
@@ -88,7 +88,7 @@ docs/architecture/v1-local-runbook.md
 - `watchlist_item(group_id)`
 - `user_position(user_id, position_date)`
 
-- [ ] **步骤 4：更新技术方案文档中的表结构与边界说明**
+- [x] **步骤 4：更新技术方案文档中的表结构与边界说明**
 
 确保技术方案同步反映：
 
@@ -105,14 +105,14 @@ docs/architecture/v1-local-runbook.md
 - 修改：`apps/server/internal/app/*`
 - 新建或修改：`apps/server/internal/domain/user/*`
 
-- [ ] **步骤 1：扩展配置模型**
+- [x] **步骤 1：扩展配置模型**
 
 增加 `auth` 配置段，至少支持：
 
 - session secret
 - bootstrap users 列表
 
-- [ ] **步骤 2：定义用户领域模型与密码校验契约**
+- [x] **步骤 2：定义用户领域模型与密码校验契约**
 
 至少包括：
 
@@ -121,7 +121,7 @@ docs/architecture/v1-local-runbook.md
 - 创建或同步 bootstrap 用户
 - 密码哈希校验
 
-- [ ] **步骤 3：实现服务启动时的 bootstrap**
+- [x] **步骤 3：实现服务启动时的 bootstrap**
 
 要求：
 
@@ -130,7 +130,7 @@ docs/architecture/v1-local-runbook.md
 3. 若账号已存在，按用户名做有限字段更新。
 4. 不记录明文密码；配置中只接受 hash。
 
-- [ ] **步骤 4：补充单元测试**
+- [x] **步骤 4：补充单元测试**
 
 覆盖：
 
@@ -147,7 +147,7 @@ docs/architecture/v1-local-runbook.md
 - 新建：`apps/server/internal/interfaces/http/handler/auth_handler.go`
 - 修改：`apps/server/cmd/quantsage-server/main.go`
 
-- [ ] **步骤 1：接入 session store**
+- [x] **步骤 1：接入 session store**
 
 要求：
 
@@ -155,7 +155,7 @@ docs/architecture/v1-local-runbook.md
 2. Cookie 至少开启 `HttpOnly`。
 3. 生产环境预留 `Secure` 开关。
 
-- [ ] **步骤 2：实现认证接口**
+- [x] **步骤 2：实现认证接口**
 
 新增：
 
@@ -163,7 +163,7 @@ docs/architecture/v1-local-runbook.md
 - `POST /api/auth/logout`
 - `GET /api/auth/me`
 
-- [ ] **步骤 3：实现 auth middleware**
+- [x] **步骤 3：实现 auth middleware**
 
 要求：
 
@@ -171,7 +171,7 @@ docs/architecture/v1-local-runbook.md
 2. 将当前用户写入 request context。
 3. 未登录访问私有接口时返回统一未授权错误。
 
-- [ ] **步骤 4：划分公开路由与私有路由**
+- [x] **步骤 4：划分公开路由与私有路由**
 
 公开路由至少保留：
 
@@ -180,7 +180,7 @@ docs/architecture/v1-local-runbook.md
 
 其余浏览器可访问的业务接口必须走鉴权中间件；local worker 只能通过 loopback-only 的内部任务接口触发 server 进程里的共享任务 runtime，不能依赖浏览器 session。
 
-- [ ] **步骤 5：补充 HTTP 路由测试**
+- [x] **步骤 5：补充 HTTP 路由测试**
 
 覆盖：
 
@@ -202,7 +202,7 @@ docs/architecture/v1-local-runbook.md
 - 新建：`apps/server/internal/interfaces/http/handler/position_handler.go`
 - 修改：`apps/server/internal/interfaces/http/router.go`
 
-- [ ] **步骤 1：定义用户隔离 SQL 契约**
+- [x] **步骤 1：定义用户隔离 SQL 契约**
 
 所有查询必须带用户边界，例如：
 
@@ -210,7 +210,7 @@ docs/architecture/v1-local-runbook.md
 - 按 `group_id + 当前用户归属` 查条目
 - 按 `user_id` 查持仓
 
-- [ ] **步骤 2：实现自选分组 CRUD**
+- [x] **步骤 2：实现自选分组 CRUD**
 
 接口：
 
@@ -219,7 +219,7 @@ docs/architecture/v1-local-runbook.md
 - `PUT /api/watchlists/{id}`
 - `DELETE /api/watchlists/{id}`
 
-- [ ] **步骤 3：实现分组内股票 CRUD**
+- [x] **步骤 3：实现分组内股票 CRUD**
 
 接口：
 
@@ -227,7 +227,7 @@ docs/architecture/v1-local-runbook.md
 - `POST /api/watchlists/{id}/items`
 - `DELETE /api/watchlists/{id}/items/{item_id}`
 
-- [ ] **步骤 4：实现持仓 CRUD**
+- [x] **步骤 4：实现持仓 CRUD**
 
 接口：
 
@@ -236,7 +236,7 @@ docs/architecture/v1-local-runbook.md
 - `PUT /api/positions/{id}`
 - `DELETE /api/positions/{id}`
 
-- [ ] **步骤 5：补充越权与隔离测试**
+- [x] **步骤 5：补充越权与隔离测试**
 
 至少验证：
 
@@ -308,7 +308,7 @@ docs/architecture/v1-local-runbook.md
 - 修改：`docs/superpowers/specs/ai_stock_analysis_database_technical_proposal.md`
 - 新建：`docs/superpowers/plans/2026-04-28-quantsage-v2-user-isolation-implementation-plan.md`
 
-- [ ] **步骤 1：更新 README 与 runbook**
+- [x] **步骤 1：更新 README 与 runbook**
 
 增加：
 
@@ -316,11 +316,11 @@ docs/architecture/v1-local-runbook.md
 - 登录方式
 - 用户隔离验证步骤
 
-- [ ] **步骤 2：同步技术方案与计划**
+- [x] **步骤 2：同步技术方案与计划**
 
 确保文档中不再保留与 V2 冲突的旧 `watchlist` / `position` 叙述。
 
-- [ ] **步骤 3：执行最终验证**
+- [x] **步骤 3：执行最终验证**
 
 运行：
 
@@ -339,6 +339,16 @@ cd apps/web && npm run build
 - 后端构建、单测、竞态检测、静态检查全部通过
 - 前端构建通过
 - 用户隔离相关新增测试通过
+
+执行记录（2026-04-29）：
+
+- `make fmt` 通过。
+- `make tidy` 通过。
+- `make build` 通过。
+- `make test` 通过；沙箱内因 `httptest` 无法监听本地端口失败一次，非沙箱重跑通过。
+- `make race` 通过；沙箱内因 `httptest` 无法监听本地端口失败一次，非沙箱重跑通过。
+- `make lint` 通过。
+- `cd apps/web && npm run build` 通过；Vite 仅提示部分 chunk 超过 500 kB。
 
 ## 4. V2 范围外
 

@@ -24,7 +24,7 @@ var localTaskCronSpecs = map[string]string{
 }
 
 func main() {
-	configPath := flag.String("config", config.ResolvePath("configs/config.example.yaml", "../../configs/config.example.yaml"), "path to config file")
+	configPath := flag.String("config", config.ResolvePath("configs/config.yaml", "../../configs/config.yaml"), "path to config file")
 	flag.Parse()
 
 	cfg, err := config.Load(*configPath)

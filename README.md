@@ -38,7 +38,7 @@ go run ./apps/server/cmd/quantsage-worker -config configs/config.example.yaml
 cd apps/web && npm install && npm run dev
 ```
 
-前端默认运行在 `http://127.0.0.1:4173/#/stocks`，并通过 Vite proxy 请求同源 `/api/*`。
+前端默认运行在 `http://127.0.0.1:4173/#/stocks`，并通过 Vite proxy 请求同源 `/api/*`。开发期后端代理目标默认是 `http://127.0.0.1:8080`，可用 `VITE_DEV_API_PROXY_TARGET` 覆盖。
 
 ## 本地默认账号
 

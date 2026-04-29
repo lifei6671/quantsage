@@ -101,7 +101,8 @@ npm run dev
 
 - 前端监听 `http://127.0.0.1:4173`
 - 页面使用 `HashRouter`
-- `/api/*` 请求会自动代理到 `http://127.0.0.1:8080`
+- `/api/*` 请求会自动通过 Vite proxy 代理到 `http://127.0.0.1:8080`
+- 如果后端监听地址不是默认值，可在前端启动时设置 `VITE_DEV_API_PROXY_TARGET`，例如 `VITE_DEV_API_PROXY_TARGET=http://127.0.0.1:8090 npm run dev`
 
 当前默认预置账号：
 
@@ -110,7 +111,7 @@ npm run dev
 
 补充说明：
 
-- 本地 `npm run dev` / `npm run preview` 默认通过 Vite proxy 走同源 `/api/*`，不需要额外配置 CORS 白名单
+- 本地 `npm run dev` / `npm run preview` 默认通过 Vite proxy 走同源 `/api/*`，不需要额外配置 CORS 白名单，也不需要设置 `VITE_API_BASE_URL`
 - 只有在显式设置 `VITE_API_BASE_URL` 做分开部署时，才需要同步配置服务端 `auth.allowed_origins`
 - 若属于跨站点部署，服务端还需要把 `auth.session_same_site` 设为 `none`，并同时开启 `auth.session_secure: true`
 
