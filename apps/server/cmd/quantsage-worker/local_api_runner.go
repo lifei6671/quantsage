@@ -89,7 +89,7 @@ func (r *localAPIRunner) Run(ctx context.Context, jobName string, bizDate time.T
 		return fmt.Errorf("marshal run job request: %w", err)
 	}
 
-	requestURL := fmt.Sprintf("%s/api/jobs/%s/run", r.baseURL, url.PathEscape(jobName))
+	requestURL := fmt.Sprintf("%s/internal/jobs/%s/run", r.baseURL, url.PathEscape(jobName))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(requestBody))
 	if err != nil {
 		return fmt.Errorf("build run job request: %w", err)

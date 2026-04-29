@@ -1,10 +1,10 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/lifei6671/quantsage/apps/server/internal/app"
 	"github.com/lifei6671/quantsage/apps/server/internal/config"
@@ -22,23 +22,33 @@ func main() {
 		os.Exit(1)
 	}
 
+	ctx := context.Background()
 	logger := infraLog.New()
-	router := httpapi.NewRouter(logger)
-	if strings.EqualFold(cfg.App.Env, "local") {
-		runtime, err := app.NewSampleRuntime("apps/server/testdata/sample")
-		if err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "bootstrap sample runtime: %v\n", err)
-			os.Exit(1)
-		}
-
-		router = httpapi.NewRouterWithDependencies(
-			logger,
-			runtime.StockService(),
-			runtime.Runner(),
-			runtime.SignalQueryService(),
-			runtime.JobQueryService(),
-		)
+	runtime, err := app.NewServerRuntime(ctx, cfg)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "bootstrap server runtime: %v\n", err)
+		os.Exit(1)
 	}
+	defer runtime.Close()
+
+	sessionStore, err := app.NewSessionStore(cfg)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "bootstrap session store: %v\n", err)
+		os.Exit(1)
+	}
+
+	router := httpapi.NewRouterWithRuntime(logger, httpapi.RouterDependencies{
+		StockService:     runtime.StockService(),
+		JobRunner:        runtime.Runner(),
+		SignalService:    runtime.SignalQueryService(),
+		JobQueryService:  runtime.JobQueryService(),
+		UserService:      runtime.UserService(),
+		WatchlistService: runtime.WatchlistService(),
+		PositionService:  runtime.PositionService(),
+		SessionStore:     sessionStore,
+		SessionName:      cfg.Auth.SessionName,
+		AllowedOrigins:   cfg.Auth.AllowedOrigins,
+	})
 
 	if err := router.Run(cfg.App.Addr); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "run server: %v\n", err)

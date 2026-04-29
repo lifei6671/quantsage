@@ -10,3 +10,17 @@ redis:
   addr: 127.0.0.1:6379
   password: ""
   db: 0
+
+auth:
+  session_secret: "***"
+  session_name: quantsage_session
+  session_secure: false
+  session_same_site: lax
+  allowed_origins: []
+  bootstrap_users:
+    - username: admin
+      display_name: 管理员
+      # 默认明文密码：admin123
+      password_hash: "$2b$12$Vt5cGvWE8xYQwbWzd6/nUuZZsXibsmcOHn7MRTnbgf59dpqWFcF9m"
+      status: active
+      role: admin

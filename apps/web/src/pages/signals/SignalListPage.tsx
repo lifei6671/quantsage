@@ -1,15 +1,16 @@
-import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import {useState} from 'react'
+import {useQuery} from '@tanstack/react-query'
 
-import { getSignals } from '../../lib/api'
-import { getTodayDateInput } from '../../lib/date'
+import {getSignals} from '../../lib/api'
+import {getTodayDateInput} from '../../lib/date'
+import {sharedQueryKeys} from '../../lib/query'
 
 export function SignalListPage() {
   const [tradeDate, setTradeDate] = useState(() => getTodayDateInput())
   const [strategyCode, setStrategyCode] = useState('')
 
   const query = useQuery({
-    queryKey: ['signals', tradeDate, strategyCode],
+    queryKey: sharedQueryKeys.signals(tradeDate, strategyCode),
     queryFn: () => getSignals(tradeDate, strategyCode, 1, 20),
   })
 

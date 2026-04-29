@@ -662,12 +662,6 @@ func (s *memoryStore) listStockDaily(params stockdomain.DailyParams) []stockdoma
 	return items
 }
 
-func (s *memoryStore) sortedStockCodes() []string {
-	keys := append([]string(nil), s.stockOrder...)
-	sort.Strings(keys)
-	return keys
-}
-
 // sortedDailyBarCodes 返回当前已写入日线数据的股票代码列表。
 func (s *memoryStore) sortedDailyBarCodes() []string {
 	keys := make([]string, 0, len(s.dailyBars))

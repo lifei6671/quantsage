@@ -1,14 +1,18 @@
 package config
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/goccy/go-yaml"
 )
 
-// Config defines the runtime configuration for the QuantSage server.
+const defaultSessionName = "quantsage_session"
+const defaultSessionSameSite = "lax"
+
+// Config 定义 QuantSage Server 的运行配置。
 type Config struct {
 	App struct {
 		Name string `yaml:"name"`
@@ -23,69 +27,44 @@ type Config struct {
 		Password string `yaml:"password"`
 		DB       int    `yaml:"db"`
 	} `yaml:"redis"`
+	Auth struct {
+		SessionSecret   string                `yaml:"session_secret"`
+		SessionName     string                `yaml:"session_name"`
+		SessionSecure   bool                  `yaml:"session_secure"`
+		SessionSameSite string                `yaml:"session_same_site"`
+		AllowedOrigins  []string              `yaml:"allowed_origins"`
+		BootstrapUsers  []BootstrapUserConfig `yaml:"bootstrap_users"`
+	} `yaml:"auth"`
 }
 
-// Load reads YAML config and applies supported environment overrides.
+// BootstrapUserConfig 定义配置文件中的预置账号项。
+type BootstrapUserConfig struct {
+	Username     string `yaml:"username"`
+	DisplayName  string `yaml:"display_name"`
+	PasswordHash string `yaml:"password_hash"`
+	Status       string `yaml:"status"`
+	Role         string `yaml:"role"`
+}
+
+// Load 读取 YAML 配置文件，并应用受支持的环境变量覆盖。
 func Load(path string) (*Config, error) {
-	file, err := os.Open(path)
+	content, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read config file: %w", err)
 	}
-	defer file.Close()
 
 	var cfg Config
-	section := ""
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if strings.HasSuffix(line, ":") {
-			section = strings.TrimSuffix(line, ":")
-			continue
-		}
-
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) != 2 {
-			return nil, fmt.Errorf("invalid config line: %q", line)
-		}
-
-		key := strings.TrimSpace(parts[0])
-		value := strings.Trim(strings.TrimSpace(parts[1]), "\"")
-		switch section {
-		case "app":
-			switch key {
-			case "name":
-				cfg.App.Name = value
-			case "env":
-				cfg.App.Env = value
-			case "addr":
-				cfg.App.Addr = value
-			}
-		case "database":
-			if key == "dsn" {
-				cfg.Database.DSN = value
-			}
-		case "redis":
-			switch key {
-			case "addr":
-				cfg.Redis.Addr = value
-			case "password":
-				cfg.Redis.Password = value
-			case "db":
-				db, convErr := strconv.Atoi(value)
-				if convErr != nil {
-					return nil, fmt.Errorf("parse redis db: %w", convErr)
-				}
-				cfg.Redis.DB = db
-			}
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scan config file: %w", err)
+	if err := yaml.Unmarshal(content, &cfg); err != nil {
+		return nil, fmt.Errorf("unmarshal config file: %w", err)
 	}
 
+	applyEnvOverrides(&cfg)
+	applyConfigDefaults(&cfg)
+
+	return &cfg, nil
+}
+
+func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("QUANTSAGE_DATABASE_DSN"); v != "" {
 		cfg.Database.DSN = v
 	}
@@ -95,6 +74,61 @@ func Load(path string) (*Config, error) {
 	if v := os.Getenv("QUANTSAGE_REDIS_PASSWORD"); v != "" {
 		cfg.Redis.Password = v
 	}
+	if v := os.Getenv("QUANTSAGE_REDIS_DB"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil {
+			cfg.Redis.DB = parsed
+		}
+	}
+	if v := os.Getenv("QUANTSAGE_SESSION_SECRET"); v != "" {
+		cfg.Auth.SessionSecret = v
+	}
+	if v := os.Getenv("QUANTSAGE_SESSION_NAME"); v != "" {
+		cfg.Auth.SessionName = v
+	}
+	if v := os.Getenv("QUANTSAGE_SESSION_SECURE"); v != "" {
+		if parsed, err := strconv.ParseBool(v); err == nil {
+			cfg.Auth.SessionSecure = parsed
+		}
+	}
+	if v := os.Getenv("QUANTSAGE_SESSION_SAME_SITE"); v != "" {
+		cfg.Auth.SessionSameSite = v
+	}
+	if v := os.Getenv("QUANTSAGE_CORS_ALLOWED_ORIGINS"); v != "" {
+		cfg.Auth.AllowedOrigins = splitCommaSeparatedValues(v)
+	}
+}
 
-	return &cfg, nil
+func applyConfigDefaults(cfg *Config) {
+	if cfg.Auth.SessionName == "" {
+		cfg.Auth.SessionName = defaultSessionName
+	}
+	if cfg.Auth.SessionSameSite == "" {
+		cfg.Auth.SessionSameSite = defaultSessionSameSite
+	}
+	cfg.Auth.AllowedOrigins = compactStrings(cfg.Auth.AllowedOrigins)
+	for index := range cfg.Auth.BootstrapUsers {
+		if cfg.Auth.BootstrapUsers[index].Status == "" {
+			cfg.Auth.BootstrapUsers[index].Status = "active"
+		}
+		if cfg.Auth.BootstrapUsers[index].Role == "" {
+			cfg.Auth.BootstrapUsers[index].Role = "user"
+		}
+	}
+}
+
+func splitCommaSeparatedValues(value string) []string {
+	return compactStrings(strings.Split(value, ","))
+}
+
+func compactStrings(items []string) []string {
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		trimmed := strings.TrimSpace(item)
+		if trimmed == "" {
+			continue
+		}
+		result = append(result, trimmed)
+	}
+
+	return result
 }

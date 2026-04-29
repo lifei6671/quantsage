@@ -1,15 +1,16 @@
-import { useState } from 'react'
-import { Link } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import {useState} from 'react'
+import {Link} from 'react-router-dom'
+import {useQuery} from '@tanstack/react-query'
 
-import { getStocks } from '../../lib/api'
+import {getStocks} from '../../lib/api'
+import {sharedQueryKeys} from '../../lib/query'
 
 export function StockListPage() {
   const [keyword, setKeyword] = useState('')
   const [inputValue, setInputValue] = useState('')
 
   const query = useQuery({
-    queryKey: ['stocks', keyword],
+    queryKey: sharedQueryKeys.stocks(keyword),
     queryFn: () => getStocks(keyword, 1, 20),
   })
 

@@ -156,8 +156,8 @@ func TestLocalAPIRunnerRun(t *testing.T) {
 		if req.Method != http.MethodPost {
 			t.Fatalf("request method = %s, want %s", req.Method, http.MethodPost)
 		}
-		if req.URL.Path != "/api/jobs/sync_daily_market/run" {
-			t.Fatalf("request path = %s, want %s", req.URL.Path, "/api/jobs/sync_daily_market/run")
+		if req.URL.Path != "/internal/jobs/sync_daily_market/run" {
+			t.Fatalf("request path = %s, want %s", req.URL.Path, "/internal/jobs/sync_daily_market/run")
 		}
 
 		var body runJobRequest

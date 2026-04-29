@@ -267,15 +267,6 @@ func (r *Registry) invalidateDependentsLocked(jobName, targetDate string) {
 	}
 }
 
-func (r *Registry) isActiveLocked(jobName, targetDate string) bool {
-	activeDates := r.active[jobName]
-	if activeDates == nil {
-		return false
-	}
-	_, running := activeDates[targetDate]
-	return running
-}
-
 func (r *Registry) isDoneLocked(jobName, targetDate string) bool {
 	doneDates := r.done[jobName]
 	if doneDates == nil {

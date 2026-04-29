@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import {useMemo, useState} from 'react'
+import {Link, useParams} from 'react-router-dom'
+import {useQuery} from '@tanstack/react-query'
 import ReactECharts from 'echarts-for-react'
 
-import { getStockDaily } from '../../lib/api'
+import {getStockDaily} from '../../lib/api'
+import {sharedQueryKeys} from '../../lib/query'
 
 export function StockDetailPage() {
   const { id } = useParams()
@@ -16,7 +17,7 @@ export function StockDetailPage() {
   })
 
   const query = useQuery({
-    queryKey: ['stock-daily', tsCode, startDate, endDate],
+    queryKey: sharedQueryKeys.stockDaily(tsCode, startDate, endDate),
     queryFn: () => getStockDaily(tsCode, startDate, endDate),
   })
 

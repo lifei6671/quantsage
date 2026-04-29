@@ -8,6 +8,18 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AppUser struct {
+	ID           int64
+	Username     string
+	DisplayName  string
+	PasswordHash string
+	Status       string
+	Role         string
+	LastLoginAt  pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
 type JobRunLog struct {
 	ID              int64
 	JobName         string
@@ -58,4 +70,33 @@ type StockDaily struct {
 	SourceUpdatedAt pgtype.Timestamptz
 	CreatedAt       pgtype.Timestamptz
 	UpdatedAt       pgtype.Timestamptz
+}
+
+type UserPosition struct {
+	ID           int64
+	UserID       int64
+	TsCode       string
+	PositionDate pgtype.Date
+	Quantity     pgtype.Numeric
+	CostPrice    pgtype.Numeric
+	Note         string
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
+type WatchlistGroup struct {
+	ID        int64
+	UserID    int64
+	Name      string
+	SortOrder int32
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
+type WatchlistItem struct {
+	ID        int64
+	GroupID   int64
+	TsCode    string
+	Note      string
+	CreatedAt pgtype.Timestamptz
 }

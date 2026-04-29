@@ -740,7 +740,28 @@ feature_data      特征指标域
 signal_data       策略信号域
 backtest_data     回测结果域
 ai_analysis       AI 分析结果域
+user_data         用户私有业务数据域
 ```
+
+V2 从数据隔离边界上明确分成两层：
+
+1. **共享底座数据**
+   - `stock_basic`
+   - `trade_calendar`
+   - `stock_daily`
+   - `adj_factor`
+   - `financial_indicator`
+   - `stock_factor_daily`
+   - `strategy_signal`
+   - `announcement`
+2. **用户私有数据**
+   - `app_user`
+   - `watchlist_group`
+   - `watchlist_item`
+   - `user_position`
+   - 后续用户级 AI 复盘与预警规则
+
+也就是说，股票、行情、指标和信号按全站统一口径计算一次；用户只隔离“我关注哪些股票”和“我的持仓是什么”。
 
 ### 11.2 核心表清单
 
@@ -768,8 +789,10 @@ ai_analysis       AI 分析结果域
 | backtest_run | 结果 | 回测任务 |
 | backtest_result | 结果 | 回测统计 |
 | ai_stock_analysis | 结果 | AI 个股分析 |
-| watchlist | 业务 | 自选股 |
-| position | 业务 | 持仓记录 |
+| app_user | 业务 | 预置账号 |
+| watchlist_group | 业务 | 用户自选分组 |
+| watchlist_item | 业务 | 分组内自选股 |
+| user_position | 业务 | 用户持仓记录 |
 | alert_rule | 配置 | 预警规则 |
 | alert_event | 结果 | 预警事件 |
 | job_run_log | 运维 | 任务执行记录 |
@@ -958,6 +981,56 @@ CREATE TABLE strategy_signal (
 CREATE INDEX idx_strategy_signal_date
 ON strategy_signal(trade_date, strategy_code, signal_type);
 ```
+
+#### 11.3.9 用户与自选股结构
+
+V2 不引入团队、组织和复杂 RBAC，只支持最简用户隔离。
+
+```sql
+CREATE TABLE app_user (
+    id BIGSERIAL PRIMARY KEY,
+    username TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    role TEXT NOT NULL DEFAULT 'user',
+    last_login_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE watchlist_group (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    sort_order INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (user_id, name)
+);
+
+CREATE TABLE watchlist_item (
+    id BIGSERIAL PRIMARY KEY,
+    group_id BIGINT NOT NULL REFERENCES watchlist_group(id) ON DELETE CASCADE,
+    ts_code TEXT NOT NULL REFERENCES stock_basic(ts_code),
+    note TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (group_id, ts_code)
+);
+
+CREATE TABLE user_position (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+    ts_code TEXT NOT NULL REFERENCES stock_basic(ts_code),
+    position_date DATE NOT NULL,
+    quantity NUMERIC(20,4) NOT NULL,
+    cost_price NUMERIC(18,4) NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+当前项目仍处于开发阶段，V2 直接修改现有 schema，不额外新增迁移脚本；旧的扁平 `watchlist` / `position` 结构不做兼容双写。
 
 ---
 
@@ -1586,7 +1659,22 @@ POST /api/strategies/{strategy_code}/run
 POST /api/strategies/{strategy_code}/backtest
 ```
 
-### 18.3 AI 分析 API
+### 18.3 认证与会话 API
+
+```http
+POST /api/auth/login
+POST /api/auth/logout
+GET  /api/auth/me
+```
+
+认证规则：
+
+1. V2 继续沿用 `gin-contrib/sessions + Redis`，不切换到 JWT。
+2. 账号来源为管理员预置账户，不开放注册。
+3. Session 中只保存最小必要的 `user_id` 和登录态元数据。
+4. 未登录请求只能访问 `/api/auth/login`、`/api/healthz` 等公开接口。
+
+### 18.4 AI 分析 API
 
 ```http
 POST /api/ai/analyze-stock
@@ -1597,17 +1685,34 @@ POST /api/ai/compare-stocks
 POST /api/ai/ask
 ```
 
-### 18.4 自选股与预警 API
+### 18.5 自选股、持仓与预警 API
 
 ```http
 GET /api/watchlists
 POST /api/watchlists
+PUT /api/watchlists/{id}
 DELETE /api/watchlists/{id}
+
+GET /api/watchlists/{id}/items
+POST /api/watchlists/{id}/items
+DELETE /api/watchlists/{id}/items/{item_id}
+
+GET /api/positions
+POST /api/positions
+PUT /api/positions/{id}
+DELETE /api/positions/{id}
+
 GET /api/alerts
 POST /api/alerts/rules
 PUT /api/alerts/rules/{id}
 GET /api/alerts/events
 ```
+
+这里的用户隔离原则是：
+
+1. 前端和调用方不传 `user_id`。
+2. `watchlists` / `positions` 全部通过 session 中的当前用户自动过滤。
+3. 共享行情接口如 `GET /api/stocks`、`GET /api/signals` 保持全站共享，不做用户分片。
 
 ---
 
@@ -1617,9 +1722,12 @@ GET /api/alerts/events
 
 | 模块 | 功能 |
 |---|---|
+| 登录与会话 | 预置账号登录、会话保持、登出、当前用户信息 |
 | 首页驾驶舱 | 市场概览、板块热度、自选股异动、持仓风险 |
 | 个股详情 | K线、指标、财务、公告、AI 分析 |
 | 策略中心 | 策略配置、信号列表、回测结果 |
+| 我的自选 | 自选分组管理、分组内股票维护、备注 |
+| 我的持仓 | 持仓录入、持仓列表、成本价和持仓日期维护 |
 | AI 复盘 | 每日持仓复盘、自选股分析、风险提示 |
 | 相似案例 | 当前形态的历史案例与统计 |
 | 公告财报 | 公告检索、财报摘要、风险事件 |
@@ -1669,6 +1777,27 @@ GET /api/alerts/events
 AI 解释
 历史胜率
 ```
+
+### 19.5 V2 登录与用户隔离约束
+
+V2 前端页面至少包括：
+
+```text
+#/login
+#/stocks
+#/stocks/:id
+#/signals
+#/watchlists
+#/positions
+#/jobs
+```
+
+约束：
+
+1. `stocks` / `signals` / `jobs` 继续展示共享底座数据。
+2. `watchlists` / `positions` 只展示当前登录用户数据。
+3. 登录成功后缓存 `me`，登出时清空 `me`、`watchlists`、`positions` 等私有缓存。
+4. 路由守卫必须阻止未登录用户访问私有页面。
 
 ---
 
@@ -1891,12 +2020,19 @@ AI 输出应避免：
 
 | 项目 | 方案 |
 |---|---|
-| API 鉴权 | JWT / Session |
+| API 鉴权 | V1/V2 优先 Session；JWT 不进入主路径 |
 | 敏感配置 | .env / Secret 管理 |
 | 数据库权限 | 最小权限原则 |
 | AI 工具调用 | 参数校验 + SQL 模板 |
 | 日志 | 避免记录 Token、密钥、账户信息 |
 | 备份 | PostgreSQL 定期备份 + MinIO 文件备份 |
+
+V2 额外增加 4 条用户隔离要求：
+
+1. 所有用户私有查询必须显式带 `user_id` 条件，禁止仅靠前端隐藏。
+2. `watchlist_group`、`watchlist_item`、`user_position` 的写操作必须校验资源归属。
+3. Redis session 必须使用 `HttpOnly` Cookie；生产环境开启 `Secure`。
+4. 管理员预置账号只通过配置或启动 bootstrap 写入，不开放公网注册入口。
 
 ---
 
@@ -1958,7 +2094,7 @@ backtest.log
 | 阶段 | 策略 |
 |---|---|
 | V1 | 全市场日线 + 自选股分钟线，PostgreSQL/TimescaleDB 足够 |
-| V2 | 增加较多分钟线，使用 TimescaleDB 分区和压缩 |
+| V2 | 增加用户登录、自选股和持仓隔离；行情底座仍共享，TimescaleDB 继续按共享时序数据优化 |
 | V3 | 全市场 tick/Level-2，增加 ClickHouse 和对象存储归档 |
 
 ### 25.3 查询优化
@@ -2003,7 +2139,32 @@ backtest.log
 前端可展示股票基础信息和日线数据。
 ```
 
-### 26.2 第二阶段：指标与信号
+### 26.2 第二阶段：最简用户版与数据隔离
+
+周期：1–2 周
+
+目标：在共享行情底座上支持管理员预置账户、登录态和用户级自选股/持仓隔离。
+
+交付：
+
+1. `app_user`、`watchlist_group`、`watchlist_item`、`user_position` 表结构。
+2. 基于 Redis session 的登录 / 登出 / 当前用户接口。
+3. 预置账号 bootstrap 能力。
+4. 自选分组与分组内股票 CRUD。
+5. 用户持仓 CRUD。
+6. 前端登录页、路由守卫、自选股页、持仓页。
+7. 用户私有缓存失效和登出清理机制。
+
+验收标准：
+
+```text
+两个不同账号登录后，只能看到自己的自选股和持仓。
+股票、日线、指标和信号数据仍为全站共享，不重复存储。
+未登录用户不能访问用户私有页面和接口。
+不新增新的迁移脚本，直接修改开发期 schema 即可完成交付。
+```
+
+### 26.3 第三阶段：指标与信号
 
 周期：1–2 周
 
@@ -2027,7 +2188,7 @@ backtest.log
 每个信号有信号强度和失效条件。
 ```
 
-### 26.3 第三阶段：回测系统
+### 26.4 第四阶段：回测系统
 
 周期：2 周
 
@@ -2049,7 +2210,7 @@ backtest.log
 回测结果可用于 AI 解释。
 ```
 
-### 26.4 第四阶段：AI 分析
+### 26.5 第五阶段：AI 分析
 
 周期：2 周
 
@@ -2073,7 +2234,7 @@ AI 分析结论必须附带数据依据。
 可以生成买入条件、卖出条件、止损条件、失效条件。
 ```
 
-### 26.5 第五阶段：公告财报 RAG
+### 26.6 第六阶段：公告财报 RAG
 
 周期：2–3 周
 
@@ -2096,7 +2257,7 @@ AI 分析结论必须附带数据依据。
 AI 可以回答财报核心变化、风险点、管理层表述等问题。
 ```
 
-### 26.6 第六阶段：盘中预警
+### 26.7 第七阶段：盘中预警
 
 周期：2–4 周
 
@@ -2284,4 +2445,3 @@ AI 负责解释、归因、过滤和生成交易计划；
 QuantSage 的最终目标不是让 AI 替代交易者，而是让交易者拥有一个：
 
 > 有数据、有纪律、有复盘、有统计、有解释能力的决策辅助系统。
-

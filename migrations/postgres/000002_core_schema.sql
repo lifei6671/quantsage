@@ -174,23 +174,48 @@ CREATE TABLE job_run_log (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE watchlist (
+CREATE TABLE app_user (
     id BIGSERIAL PRIMARY KEY,
+    username TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    role TEXT NOT NULL DEFAULT 'user',
+    last_login_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE watchlist_group (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
+    sort_order INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (user_id, name)
+);
+
+CREATE TABLE watchlist_item (
+    id BIGSERIAL PRIMARY KEY,
+    group_id BIGINT NOT NULL REFERENCES watchlist_group(id) ON DELETE CASCADE,
     ts_code TEXT NOT NULL REFERENCES stock_basic(ts_code),
     note TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (name, ts_code)
+    UNIQUE (group_id, ts_code)
 );
 
-CREATE TABLE position (
+CREATE TABLE user_position (
     id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
     ts_code TEXT NOT NULL REFERENCES stock_basic(ts_code),
     position_date DATE NOT NULL,
     quantity NUMERIC(20,4) NOT NULL,
     cost_price NUMERIC(18,4) NOT NULL,
     note TEXT NOT NULL DEFAULT '',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (user_id, ts_code, position_date)
 );
 
 CREATE TABLE announcement (
@@ -395,21 +420,42 @@ COMMENT ON COLUMN job_run_log.progress_total IS '总进度';
 COMMENT ON COLUMN job_run_log.meta IS '任务补充信息';
 COMMENT ON COLUMN job_run_log.created_at IS '记录创建时间';
 
-COMMENT ON TABLE watchlist IS '自选股表';
-COMMENT ON COLUMN watchlist.id IS '主键';
-COMMENT ON COLUMN watchlist.name IS '自选分组名称';
-COMMENT ON COLUMN watchlist.ts_code IS '股票代码';
-COMMENT ON COLUMN watchlist.note IS '备注';
-COMMENT ON COLUMN watchlist.created_at IS '记录创建时间';
+COMMENT ON TABLE app_user IS '系统预置账号表';
+COMMENT ON COLUMN app_user.id IS '主键';
+COMMENT ON COLUMN app_user.username IS '登录用户名，站内唯一';
+COMMENT ON COLUMN app_user.display_name IS '展示名称';
+COMMENT ON COLUMN app_user.password_hash IS '密码哈希，不保存明文';
+COMMENT ON COLUMN app_user.status IS '账号状态，例如 active 或 disabled';
+COMMENT ON COLUMN app_user.role IS '账号角色，例如 admin 或 user';
+COMMENT ON COLUMN app_user.last_login_at IS '最近一次登录时间';
+COMMENT ON COLUMN app_user.created_at IS '记录创建时间';
+COMMENT ON COLUMN app_user.updated_at IS '记录更新时间';
 
-COMMENT ON TABLE position IS '持仓记录表';
-COMMENT ON COLUMN position.id IS '主键';
-COMMENT ON COLUMN position.ts_code IS '股票代码';
-COMMENT ON COLUMN position.position_date IS '持仓日期';
-COMMENT ON COLUMN position.quantity IS '持仓数量';
-COMMENT ON COLUMN position.cost_price IS '持仓成本价';
-COMMENT ON COLUMN position.note IS '备注';
-COMMENT ON COLUMN position.created_at IS '记录创建时间';
+COMMENT ON TABLE watchlist_group IS '用户自选分组表';
+COMMENT ON COLUMN watchlist_group.id IS '主键';
+COMMENT ON COLUMN watchlist_group.user_id IS '所属用户 ID';
+COMMENT ON COLUMN watchlist_group.name IS '分组名称，同一用户下唯一';
+COMMENT ON COLUMN watchlist_group.sort_order IS '排序值，越小越靠前';
+COMMENT ON COLUMN watchlist_group.created_at IS '记录创建时间';
+COMMENT ON COLUMN watchlist_group.updated_at IS '记录更新时间';
+
+COMMENT ON TABLE watchlist_item IS '自选分组内股票表';
+COMMENT ON COLUMN watchlist_item.id IS '主键';
+COMMENT ON COLUMN watchlist_item.group_id IS '所属自选分组 ID';
+COMMENT ON COLUMN watchlist_item.ts_code IS '股票代码';
+COMMENT ON COLUMN watchlist_item.note IS '分组内备注';
+COMMENT ON COLUMN watchlist_item.created_at IS '记录创建时间';
+
+COMMENT ON TABLE user_position IS '用户持仓记录表';
+COMMENT ON COLUMN user_position.id IS '主键';
+COMMENT ON COLUMN user_position.user_id IS '所属用户 ID';
+COMMENT ON COLUMN user_position.ts_code IS '股票代码';
+COMMENT ON COLUMN user_position.position_date IS '持仓日期';
+COMMENT ON COLUMN user_position.quantity IS '持仓数量';
+COMMENT ON COLUMN user_position.cost_price IS '持仓成本价';
+COMMENT ON COLUMN user_position.note IS '备注';
+COMMENT ON COLUMN user_position.created_at IS '记录创建时间';
+COMMENT ON COLUMN user_position.updated_at IS '记录更新时间';
 
 COMMENT ON TABLE announcement IS '公告元数据表';
 COMMENT ON COLUMN announcement.id IS '主键';
@@ -448,3 +494,7 @@ COMMENT ON COLUMN ai_stock_analysis.conclusion IS '分析结论';
 COMMENT ON COLUMN ai_stock_analysis.evidence IS '证据列表';
 COMMENT ON COLUMN ai_stock_analysis.risks IS '风险列表';
 COMMENT ON COLUMN ai_stock_analysis.created_at IS '记录创建时间';
+
+CREATE INDEX idx_watchlist_group_user_id ON watchlist_group(user_id);
+CREATE INDEX idx_watchlist_item_group_id ON watchlist_item(group_id);
+CREATE INDEX idx_user_position_user_date ON user_position(user_id, position_date);

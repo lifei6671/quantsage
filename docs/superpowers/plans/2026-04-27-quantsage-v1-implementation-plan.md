@@ -1096,13 +1096,13 @@ sync_trade_calendar    0 5 8 * * 1-5
 daily_market_pipeline  0 0 18 * * 1-5
 ```
 
-`daily_market_pipeline` 只存在于 worker 本地调度层，触发后按顺序调用 server 的手动任务 API：`sync_daily_market` → `calc_daily_factor` → `generate_strategy_signals`。任一步失败时停止后续步骤并记录该 pipeline 调度失败。
+`daily_market_pipeline` 只存在于 worker 本地调度层，触发后按顺序调用 server 的内部任务接口：`sync_daily_market` → `calc_daily_factor` → `generate_strategy_signals`。任一步失败时停止后续步骤并记录该 pipeline 调度失败。
 
 worker 调用 server 手动任务 API 时必须使用任务级超时，不能使用 10 秒级的普通 HTTP 短超时；V1 local runner 的单步请求超时为 30 分钟，避免较慢的数据导入或因子计算被客户端提前中断。
 
 cron 触发后传入任务执行器的 `bizDate` 必须先归一化为 UTC 日期（`00:00:00Z`），不能直接把带时分秒的 `time.Now()` 传给按交易日过滤的数据源或 sample runtime。
 
-local 模式下，worker 不再单独持有一份 sample runtime；它只负责 cron 调度，并通过 `POST /api/jobs/:job_name/run` 调用 server 进程里的唯一 runtime。否则 server 与 worker 各自维护独立内存态时，UI 和任务查询接口将看不到 cron 执行后的结果。
+local 模式下，worker 不再单独持有一份 sample runtime；它只负责 cron 调度，并通过 loopback-only 的 `POST /internal/jobs/:job_name/run` 调用 server 进程里的唯一 runtime。浏览器侧仍使用受 session 保护的 `POST /api/jobs/:job_name/run`。否则 server 与 worker 各自维护独立内存态时，UI 和任务查询接口将看不到 cron 执行后的结果。
 
 注册完成后必须启动 scheduler 并保持进程常驻，直到收到退出信号。
 
@@ -1225,7 +1225,7 @@ npm run preview
 - 新建：`docs/architecture/v1-local-runbook.md`
 - 修改：`README.md`
 
-- [ ] **步骤 1：记录本地环境变量**
+- [x] **步骤 1：记录本地环境变量**
 
 必需变量：
 
@@ -1239,7 +1239,7 @@ QUANTSAGE_DATABASE_DSN=postgres://quantsage:***@127.0.0.1:5432/quantsage?sslmode
 QUANTSAGE_REDIS_ADDR=127.0.0.1:6379
 ```
 
-- [ ] **步骤 2：冒烟流程**
+- [x] **步骤 2：冒烟流程**
 
 运行：
 
@@ -1303,3 +1303,4 @@ cd apps/web && npm run build
 - 数据库表覆盖 V1 必需表，并为 RAG/AI 预留低耦合表。
 - DSL 延后；V1 策略使用固定 Go 代码 + JSON 参数配置。
 - Docker Compose 不包含明文密码。
+- `#/jobs` 已补齐为“手动触发 + 状态列表”组合页，并消费 `GET /api/jobs`。
