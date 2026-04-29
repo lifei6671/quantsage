@@ -664,6 +664,22 @@ Tushare HTTP API
 商业数据源 REST API
 ```
 
+V1 当前采用该方式接入 Tushare Pro，已覆盖股票基础信息、交易日历和日线行情三个导入链路。未配置 token 时降级为本地样例数据源，保证本地开发和冒烟验证不依赖外部网络。
+
+2026-04-29 的东财迁移补充后，`apps/server` 同时支持 `eastmoney` 作为可选导入源：
+
+1. 通过 `datasource.default_source=eastmoney` 切换 `sync_stock_basic`、`sync_trade_calendar`、`sync_daily_market` 的数据来源。
+2. 东财交易日历当前通过上证综指日线推导沪深北统一 A 股交易日，属于受控实现假设，后续若锁定更稳定接口应整体替换。
+3. EastMoney 抓取模式支持 `http / auto / chromedp`：
+   - `http`：只走 HTTP
+   - `auto`：先走 HTTP，命中 HTML / 人机验证页后自动取浏览器 Cookie 再重试一次
+   - `chromedp`：每次先取浏览器 Cookie，再发真正的数据 HTTP 请求
+4. `apps/server/internal/infra/browserfetch` 已抽成公共浏览器抓取基础设施层，当前承接 Cookie 获取、缓存和基础页面运行能力，不承载 EastMoney 业务语义。
+   - Runner 复用已启动的 Chrome / Chromium 进程，每次请求创建独立 tab，并通过 `Close(ctx)` 释放底层进程资源。
+   - 浏览器 UA 优先通过 `github.com/lib4u/fake-useragent` 生成 Chrome UA；当生成失败或结果为空时，回退到项目内置固定 UA。
+   - 常用运行参数对外开放：并发 tab 数、等待 selector、Accept-Language、是否禁图、是否 no-sandbox、窗口尺寸、额外 Chrome flags、阻止加载的 URL pattern。
+5. richer K 线查询能力（分钟线、周月季年线、复权、批量查询、均线、聚合）已经在后端领域层落地，并复用与导入链路一致的 EastMoney history fallback；这部分尚未暴露 HTTP API。
+
 优点：
 
 1. Go 原生支持好。
@@ -686,6 +702,14 @@ Tushare HTTP API
 1. 需要遵守 robots、访问频率和数据使用边界。
 2. 不建议作为核心生产数据源。
 3. 必须保留 source 和 fetched_at。
+
+对 EastMoney 当前实现的补充约束：
+
+1. 浏览器回退只用于刷新 Cookie 与恢复 HTTP 请求，不直接在浏览器里抓取 K 线 JSON。
+2. 当 `browser_path` 为空时，当前实现依赖 `chromedp` 默认可执行文件解析，不做项目内额外平台探测。
+3. 若浏览器不可用、Cookie 获取失败或二次重试仍失败，统一按 `datasource unavailable` 处理并保留调用上下文。
+4. 浏览器回退使用 Chrome Pool：`browser_count` 控制 Chrome 进程数，`browser_tabs_per_browser` 控制单进程并发 tab，总并发为二者乘积；`browser_max_concurrent_tabs` 仅作为旧配置兼容字段。
+5. 单个 Chrome 进程累计打开 `browser_recycle_after_tabs` 个 tab 后，会在该 worker 空闲时强制回收重启，降低长时间运行的内存泄露和反爬特征累积风险。
 
 #### 方式三：Python 辅助桥接，可选
 

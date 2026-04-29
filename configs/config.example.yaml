@@ -11,6 +11,45 @@ redis:
   password: ""
   db: 0
 
+datasource:
+  # 默认导入源支持 tushare / eastmoney；未配置时默认走 tushare。
+  default_source: tushare
+  tushare:
+    # 本地 sample 运行时不需要真实 token；接入真实 Tushare 时再通过本字段或 QUANTSAGE_TUSHARE_TOKEN 配置。
+    token: ""
+  eastmoney:
+    # 东财导入链路已支持股票基础、交易日历和全市场日线导入；
+    # richer K 线查询服务当前仅在后端领域层可用，暂未暴露 HTTP API。
+    endpoint: https://push2his.eastmoney.com
+    quote_endpoint: https://push2his.eastmoney.com
+    timeout_seconds: 30
+    max_retries: 2
+    user_agent_mode: stable
+    # 浏览器回退配置用于在接口受限时切换到浏览器抓取。
+    fetch_mode: auto
+    browser_path: ""
+    browser_timeout_seconds: 60
+    browser_cookie_ttl_seconds: 720
+    browser_headless: true
+    # browser_user_agent_mode 支持 stable / mobile / default / custom：
+    # stable/mobile/custom 会优先用 fake-useragent 生成 Chrome UA，失败时回退到内置固定 UA。
+    browser_user_agent_mode: stable
+    browser_user_agent_platform: desktop
+    # Chrome Pool：总并发 = browser_count * browser_tabs_per_browser。
+    # browser_max_concurrent_tabs 为旧配置别名；新配置优先使用 browser_tabs_per_browser。
+    browser_count: 1
+    browser_max_concurrent_tabs: 4
+    browser_tabs_per_browser: 4
+    browser_recycle_after_tabs: 200
+    browser_wait_ready_selector: body
+    browser_accept_language: zh-CN,zh;q=0.9,en;q=0.8
+    browser_disable_images: false
+    browser_no_sandbox: false
+    browser_window_width: 1366
+    browser_window_height: 768
+    browser_blocked_url_patterns: []
+    browser_extra_flags: []
+
 auth:
   session_secret: "***"
   session_name: quantsage_session

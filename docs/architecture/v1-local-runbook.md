@@ -31,6 +31,38 @@ QUANTSAGE_REDIS_ADDR=127.0.0.1:6379
 - `configs/config.example.yaml` 默认使用 `local` 模式，未覆盖时服务监听 `:8080`
 - `QUANTSAGE_DATABASE_DSN` 与 `QUANTSAGE_REDIS_ADDR` 会覆盖 YAML 中的默认值
 - V1 本地样例运行时依赖 `apps/server/testdata/sample`，无需真实 Tushare Token
+- `datasource.default_source` 支持 `tushare` / `eastmoney`
+- 配置 `datasource.tushare.token` 或 `QUANTSAGE_TUSHARE_TOKEN` 后，手动触发的 `sync_stock_basic`、`sync_trade_calendar`、`sync_daily_market` 会改用 Tushare Pro HTTP 数据源
+- 若将 `datasource.default_source` 切到 `eastmoney`，同一批导入任务会改走东财公开行情接口
+- 东财抓取模式支持：
+  - `datasource.eastmoney.fetch_mode=http`
+  - `datasource.eastmoney.fetch_mode=auto`
+  - `datasource.eastmoney.fetch_mode=chromedp`
+- `auto` / `chromedp` 模式下还应关注：
+  - `datasource.eastmoney.browser_path`
+  - `datasource.eastmoney.browser_timeout_seconds`
+  - `datasource.eastmoney.browser_cookie_ttl_seconds`
+  - `datasource.eastmoney.browser_headless`
+  - `datasource.eastmoney.browser_user_agent_mode`
+  - `datasource.eastmoney.browser_user_agent_platform`
+  - `datasource.eastmoney.browser_count`
+  - `datasource.eastmoney.browser_max_concurrent_tabs`
+  - `datasource.eastmoney.browser_tabs_per_browser`
+  - `datasource.eastmoney.browser_recycle_after_tabs`
+  - `datasource.eastmoney.browser_wait_ready_selector`
+  - `datasource.eastmoney.browser_accept_language`
+  - `datasource.eastmoney.browser_disable_images`
+  - `datasource.eastmoney.browser_no_sandbox`
+  - `datasource.eastmoney.browser_window_width`
+  - `datasource.eastmoney.browser_window_height`
+  - `datasource.eastmoney.browser_blocked_url_patterns`
+  - `datasource.eastmoney.browser_extra_flags`
+- `browserfetch.Runner` 使用 Chrome Pool：每个 worker 维护一个 Chrome / Chromium 进程，进程内按 tab 并发抓取；总并发 = `browser_count * browser_tabs_per_browser`
+- 单个 Chrome 进程累计打开 `browser_recycle_after_tabs` 个 tab 后，会在该 worker 没有活跃 tab 时回收重启；服务退出或测试清理时应调用 `Close(ctx)` 释放全部进程
+- `browser_max_concurrent_tabs` 保留为旧配置兼容字段；新配置优先使用 `browser_tabs_per_browser`
+- `browser_user_agent_mode=stable/mobile/custom` 会优先用 `github.com/lib4u/fake-useragent` 生成 Chrome UA，生成失败或结果为空时回退到项目内置固定 UA；`default` 保留浏览器原生 UA
+- 东财交易日历当前通过上证综指日线推导沪深北统一 A 股交易日，属于显式实现假设，不是官方日历接口
+- 若启用 `auto` / `chromedp`，本机还需要可用的 Chrome / Chromium；当 `browser_path` 为空时，当前实现依赖 `chromedp` 默认可执行文件解析，不做项目内额外平台探测
 
 ## 3. 启动基础依赖
 
@@ -89,6 +121,8 @@ go run ./apps/server/cmd/quantsage-worker -config configs/config.example.yaml
 
 - local worker 只负责 cron 调度
 - 真正的 sample runtime 只保留在 server 进程里，避免 worker 与 API 各自维护独立内存态
+- richer K 线查询服务当前只存在于后端领域层，尚未开放独立 HTTP 路由
+- richer K 线与导入链路都复用同一套 EastMoney history browser fallback
 
 ### 终端 C：启动前端
 
@@ -170,6 +204,14 @@ curl -b "$COOKIE_JAR" 'http://127.0.0.1:8080/api/jobs?biz_date=2026-04-27&page=1
 - `GET /api/signals` 在信号任务执行后返回确定性的策略信号数据
 - `GET /api/jobs` 返回 `job_run_log` 风格的任务记录
 
+如果将导入源切到 `eastmoney`，还应额外关注：
+
+- 全市场日线导入会先拉取 A 股股票列表，再逐证券抓取东财日 K
+- `fetch_mode=http` 时，东财返回 HTML / 人机验证页会直接以 `datasource unavailable` 失败
+- `fetch_mode=auto` 时，命中 HTML / 人机验证页会先尝试浏览器 Cookie 回退一次；若浏览器不可用或回退后仍失败，同样会返回 `datasource unavailable`
+- `fetch_mode=chromedp` 时，每次都会先取浏览器 Cookie，再发真正的数据 HTTP 请求
+- 当前 richer K 线能力未暴露 HTTP，因此接口验收仍以上述导入链路为准
+
 ## 8. 前端验收点
 
 打开 `http://127.0.0.1:4173/#/login`，先使用默认账号登录，再确认：
@@ -195,6 +237,7 @@ curl -b "$COOKIE_JAR" 'http://127.0.0.1:8080/api/jobs?biz_date=2026-04-27&page=1
 - `apps/server/go.mod` 存在且可读
 - 本地 Go 版本与项目依赖兼容
 - `golangci-lint` 已安装
+- 当前本地已观察到 `golangci-lint run ./...` 可能报 `context loading failed: no go files to analyze`，这是工具加载异常，不代表已定位到代码级 lint 问题
 
 ### 9.2 前端打开后接口请求失败
 

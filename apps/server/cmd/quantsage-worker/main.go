@@ -15,6 +15,7 @@ import (
 	"github.com/lifei6671/quantsage/apps/server/internal/config"
 	infraLog "github.com/lifei6671/quantsage/apps/server/internal/infra/log"
 	"github.com/lifei6671/quantsage/apps/server/internal/infra/scheduler"
+	"github.com/lifei6671/quantsage/apps/server/internal/pkg/consts"
 )
 
 var localTaskCronSpecs = map[string]string{
@@ -34,7 +35,7 @@ func main() {
 	}
 
 	logger := infraLog.New()
-	if !strings.EqualFold(cfg.App.Env, "local") {
+	if !strings.EqualFold(cfg.App.Env, consts.AppEnvLocal) {
 		logger.Info("quantsage worker bootstrap", "mode", cfg.App.Env, "jobs", []string{})
 		return
 	}
@@ -62,7 +63,7 @@ func main() {
 	}
 	s.Start()
 
-	logger.Info("quantsage worker bootstrap", "mode", "local", "jobs", s.TaskNames())
+	logger.Info("quantsage worker bootstrap", "mode", consts.AppEnvLocal, "jobs", s.TaskNames())
 	waitForShutdown(logger, s)
 }
 

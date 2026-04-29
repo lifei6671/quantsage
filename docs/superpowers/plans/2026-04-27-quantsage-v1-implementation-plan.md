@@ -19,7 +19,7 @@
 - 数据访问：`pgx/v5` + `sqlc`，SQL 文件作为领域查询契约。
 - 数据迁移：`goose`，迁移文件放在 `migrations/postgres`。
 - 任务调度：`robfig/cron`，所有任务都写入 `job_run_log`。
-- 数据源：V1 默认使用样例数据源。Tushare HTTP 数据源只保留接口和配置接线；没有 Token 时系统仍可完整运行。
+- 数据源：V1 默认使用样例数据源。配置 `datasource.tushare.token` 或 `QUANTSAGE_TUSHARE_TOKEN` 后，手动导入任务可通过 Tushare HTTP 数据源同步股票基础信息、交易日历和日线行情；没有 Token 时系统仍可完整运行。
 - 策略 DSL：V1 不实现通用表达式 DSL。先使用固定 Go 策略 + JSON 参数化策略定义。
 - 回测默认语义：收盘后生成信号，下一交易日开盘买入，T+1 后允许卖出，价格使用前复权数据，手续费/印花税/滑点可配置，停牌/涨跌停/无成交量场景记录未成交原因。
 - API 响应统一使用 `{"code":0,"errmsg":"","toast":"","data":{}}`。
@@ -852,7 +852,9 @@ type Source interface {
 
 - [x] **步骤 3：实现 Tushare 未启用行为**
 
-如果 `TUSHARE_TOKEN` 为空，Tushare 数据源返回 `CodeDatasourceUnavailable`，错误消息为 `tushare token is empty`。
+如果配置项 `datasource.tushare.token` 为空，Tushare 数据源返回 `CodeDatasourceUnavailable`，错误消息为 `tushare token is empty`。本地可用环境变量 `QUANTSAGE_TUSHARE_TOKEN` 覆盖配置文件。
+
+已接入 Tushare Pro HTTP API 的 `stock_basic`、`trade_cal`、`daily` 三个接口。local sample runtime 仍用样例数据完成启动预加载；当配置了 token 后，导入任务的外部数据源切换为 Tushare。
 
 - [x] **步骤 4：实现导入任务**
 
@@ -874,7 +876,7 @@ cd apps/server
 go test -timeout 120s ./internal/domain/datasource/... ./internal/domain/job/...
 ```
 
-预期：样例数据源测试通过，且不依赖外部网络。
+预期：样例数据源与 Tushare HTTP 映射测试通过，且不依赖外部网络。
 
 ### 任务 5：股票 API
 

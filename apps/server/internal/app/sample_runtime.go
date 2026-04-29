@@ -28,14 +28,26 @@ type SampleRuntime struct {
 	jobQuery     jobdomain.QueryService
 }
 
+type closeableDatasource interface {
+	Close(context.Context) error
+}
+
 // NewSampleRuntime 创建 sample + 内存态运行时。
 func NewSampleRuntime(sampleDir string) (*SampleRuntime, error) {
+	return NewSampleRuntimeWithImportSource(sampleDir, nil)
+}
+
+// NewSampleRuntimeWithImportSource 创建 sample 预加载运行时，并允许导入任务使用外部数据源。
+func NewSampleRuntimeWithImportSource(sampleDir string, importSource datasource.Source) (*SampleRuntime, error) {
 	resolvedDir, err := resolveSampleDataDir(sampleDir)
 	if err != nil {
 		return nil, err
 	}
 
 	source := sampleds.New(resolvedDir)
+	if importSource == nil {
+		importSource = source
+	}
 	store := newMemoryStore()
 	if err := preloadSampleData(context.Background(), source, store); err != nil {
 		return nil, err
@@ -43,7 +55,7 @@ func NewSampleRuntime(sampleDir string) (*SampleRuntime, error) {
 
 	runner := jobdomain.NewRegistry()
 	runtime := &SampleRuntime{
-		source:       source,
+		source:       importSource,
 		store:        store,
 		runner:       runner,
 		stockService: &sampleStockService{store: store},
@@ -74,6 +86,24 @@ func (r *SampleRuntime) SignalQueryService() strategydomain.QueryService {
 // JobQueryService 返回任务记录查询服务。
 func (r *SampleRuntime) JobQueryService() jobdomain.QueryService {
 	return r.jobQuery
+}
+
+// Close 释放 sample runtime 持有的外部数据源资源。
+func (r *SampleRuntime) Close() {
+	if r == nil || r.source == nil {
+		return
+	}
+	closeable, ok := r.source.(closeableDatasource)
+	if !ok {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	closeErr := closeable.Close(ctx)
+	if closeErr != nil {
+		return
+	}
 }
 
 // Runner 返回任务执行器。

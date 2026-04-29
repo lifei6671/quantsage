@@ -12,6 +12,7 @@ import (
 	jobdomain "github.com/lifei6671/quantsage/apps/server/internal/domain/job"
 	"github.com/lifei6671/quantsage/apps/server/internal/domain/marketdata"
 	strategydomain "github.com/lifei6671/quantsage/apps/server/internal/domain/strategy"
+	"github.com/lifei6671/quantsage/apps/server/internal/pkg/consts"
 )
 
 func TestUpsertStockDailyMergesHistory(t *testing.T) {
@@ -46,6 +47,55 @@ func TestUpsertStockDailyMergesHistory(t *testing.T) {
 	}
 	if !items[1].Close.Equal(decimal.RequireFromString("10.25")) {
 		t.Fatalf("items[1].Close = %s, want %s", items[1].Close, "10.25")
+	}
+}
+
+func TestSampleRuntimeUsesImportSourceForSyncJobs(t *testing.T) {
+	t.Parallel()
+
+	importSource := &noopSampleSource{
+		stocks: []datasource.StockBasic{
+			{
+				TSCode:   "688001.SH",
+				Symbol:   "688001",
+				Name:     "测试股票",
+				Industry: "软件服务",
+				Exchange: "SSE",
+				ListDate: time.Date(2026, 4, 29, 0, 0, 0, 0, time.UTC),
+				Source:   consts.DatasourceTushare,
+			},
+		},
+	}
+	runtime, err := NewSampleRuntimeWithImportSource("../../testdata/sample", importSource)
+	if err != nil {
+		t.Fatalf("NewSampleRuntimeWithImportSource() error = %v", err)
+	}
+
+	if err := runtime.Runner().Run(context.Background(), "sync_stock_basic", time.Date(2026, 4, 29, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("Run(sync_stock_basic) error = %v", err)
+	}
+
+	stock, err := runtime.StockService().GetStock(context.Background(), "688001.SH")
+	if err != nil {
+		t.Fatalf("GetStock() error = %v", err)
+	}
+	if stock.Name != "测试股票" || stock.Exchange != "SSE" {
+		t.Fatalf("stock = %+v, want import source stock", stock)
+	}
+}
+
+func TestSampleRuntimeCloseClosesImportSource(t *testing.T) {
+	t.Parallel()
+
+	importSource := &noopSampleSource{}
+	runtime, err := NewSampleRuntimeWithImportSource("../../testdata/sample", importSource)
+	if err != nil {
+		t.Fatalf("NewSampleRuntimeWithImportSource() error = %v", err)
+	}
+
+	runtime.Close()
+	if importSource.closeCalls != 1 {
+		t.Fatalf("closeCalls = %d, want 1", importSource.closeCalls)
 	}
 }
 
@@ -399,18 +449,28 @@ func TestStartRejectsConcurrentRunOnSameJobAndDate(t *testing.T) {
 	}
 }
 
-type noopSampleSource struct{}
+type noopSampleSource struct {
+	stocks     []datasource.StockBasic
+	days       []datasource.TradeDay
+	bars       []datasource.DailyBar
+	closeCalls int
+}
 
 func (s *noopSampleSource) ListStocks(ctx context.Context) ([]datasource.StockBasic, error) {
-	return nil, nil
+	return append([]datasource.StockBasic(nil), s.stocks...), nil
 }
 
 func (s *noopSampleSource) ListTradeCalendar(ctx context.Context, exchange string, startDate, endDate time.Time) ([]datasource.TradeDay, error) {
-	return nil, nil
+	return append([]datasource.TradeDay(nil), s.days...), nil
 }
 
 func (s *noopSampleSource) ListDailyBars(ctx context.Context, startDate, endDate time.Time) ([]datasource.DailyBar, error) {
-	return nil, nil
+	return append([]datasource.DailyBar(nil), s.bars...), nil
+}
+
+func (s *noopSampleSource) Close(context.Context) error {
+	s.closeCalls++
+	return nil
 }
 
 func buildDatasourceBar(tsCode, tradeDate, closePrice, volume string) datasource.DailyBar {

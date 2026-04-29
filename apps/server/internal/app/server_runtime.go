@@ -14,6 +14,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/lifei6671/quantsage/apps/server/internal/config"
+	"github.com/lifei6671/quantsage/apps/server/internal/domain/datasource"
+	eastmoneyds "github.com/lifei6671/quantsage/apps/server/internal/domain/datasource/eastmoney"
+	tushareds "github.com/lifei6671/quantsage/apps/server/internal/domain/datasource/tushare"
 	jobdomain "github.com/lifei6671/quantsage/apps/server/internal/domain/job"
 	positiondomain "github.com/lifei6671/quantsage/apps/server/internal/domain/position"
 	stockdomain "github.com/lifei6671/quantsage/apps/server/internal/domain/stock"
@@ -21,6 +24,7 @@ import (
 	userdomain "github.com/lifei6671/quantsage/apps/server/internal/domain/user"
 	watchlistdomain "github.com/lifei6671/quantsage/apps/server/internal/domain/watchlist"
 	"github.com/lifei6671/quantsage/apps/server/internal/infra/db/dbgen"
+	"github.com/lifei6671/quantsage/apps/server/internal/pkg/consts"
 )
 
 const (
@@ -65,8 +69,13 @@ func NewServerRuntime(ctx context.Context, cfg *config.Config) (*ServerRuntime, 
 		positionService:  positiondomain.NewService(queries),
 	}
 
-	if strings.EqualFold(cfg.App.Env, "local") {
-		sampleRuntime, err := NewSampleRuntime("apps/server/testdata/sample")
+	if strings.EqualFold(cfg.App.Env, consts.AppEnvLocal) {
+		importSource, err := buildLocalRuntimeImportSource(cfg)
+		if err != nil {
+			dbPool.Close()
+			return nil, fmt.Errorf("select local import source: %w", err)
+		}
+		sampleRuntime, err := NewSampleRuntimeWithImportSource("apps/server/testdata/sample", importSource)
 		if err != nil {
 			dbPool.Close()
 			return nil, fmt.Errorf("bootstrap sample runtime: %w", err)
@@ -77,8 +86,68 @@ func NewServerRuntime(ctx context.Context, cfg *config.Config) (*ServerRuntime, 
 	return runtime, nil
 }
 
+func buildImportSource(cfg *config.Config) datasource.Source {
+	switch strings.ToLower(strings.TrimSpace(cfg.Datasource.DefaultSource)) {
+	case consts.DatasourceEastMoney:
+		return eastmoneyds.NewFromConfig(buildEastMoneyDatasourceConfig(cfg))
+	case consts.DatasourceTushare, "":
+		// 任务 1 的选择语义以 default_source 为准；token 是否可用交给数据源自身处理。
+		return tushareds.New(cfg.Datasource.Tushare.Token)
+	default:
+		return nil
+	}
+}
+
+func buildEastMoneyDatasourceConfig(cfg *config.Config) eastmoneyds.Config {
+	return eastmoneyds.Config{
+		Endpoint:                  cfg.Datasource.EastMoney.Endpoint,
+		QuoteEndpoint:             cfg.Datasource.EastMoney.QuoteEndpoint,
+		TimeoutSeconds:            cfg.Datasource.EastMoney.TimeoutSeconds,
+		MaxRetries:                cfg.Datasource.EastMoney.MaxRetries,
+		UserAgentMode:             cfg.Datasource.EastMoney.UserAgentMode,
+		FetchMode:                 eastmoneyds.FetchMode(cfg.Datasource.EastMoney.FetchMode),
+		BrowserPath:               cfg.Datasource.EastMoney.BrowserPath,
+		BrowserTimeoutSeconds:     cfg.Datasource.EastMoney.BrowserTimeoutSeconds,
+		BrowserCookieTTLSeconds:   cfg.Datasource.EastMoney.BrowserCookieTTLSeconds,
+		BrowserHeadless:           cfg.Datasource.EastMoney.BrowserHeadless,
+		BrowserUserAgentMode:      cfg.Datasource.EastMoney.BrowserUserAgentMode,
+		BrowserUserAgentPlatform:  cfg.Datasource.EastMoney.BrowserUserAgentPlatform,
+		BrowserCount:              cfg.Datasource.EastMoney.BrowserCount,
+		BrowserMaxConcurrentTabs:  cfg.Datasource.EastMoney.BrowserMaxConcurrentTabs,
+		BrowserTabsPerBrowser:     cfg.Datasource.EastMoney.BrowserTabsPerBrowser,
+		BrowserRecycleAfterTabs:   cfg.Datasource.EastMoney.BrowserRecycleAfterTabs,
+		BrowserWaitReadySelector:  cfg.Datasource.EastMoney.BrowserWaitReadySelector,
+		BrowserAcceptLanguage:     cfg.Datasource.EastMoney.BrowserAcceptLanguage,
+		BrowserDisableImages:      cfg.Datasource.EastMoney.BrowserDisableImages,
+		BrowserNoSandbox:          cfg.Datasource.EastMoney.BrowserNoSandbox,
+		BrowserWindowWidth:        cfg.Datasource.EastMoney.BrowserWindowWidth,
+		BrowserWindowHeight:       cfg.Datasource.EastMoney.BrowserWindowHeight,
+		BrowserBlockedURLPatterns: append([]string(nil), cfg.Datasource.EastMoney.BrowserBlockedURLPatterns...),
+		BrowserExtraFlags:         append([]string(nil), cfg.Datasource.EastMoney.BrowserExtraFlags...),
+	}
+}
+
+func buildLocalRuntimeImportSource(cfg *config.Config) (datasource.Source, error) {
+	switch strings.ToLower(strings.TrimSpace(cfg.Datasource.DefaultSource)) {
+	case consts.DatasourceEastMoney:
+		return eastmoneyds.NewFromConfig(buildEastMoneyDatasourceConfig(cfg)), nil
+	case consts.DatasourceTushare, "":
+		// local 模式下没有 token 时继续回退到 sample source，避免破坏原有默认链路。
+		if strings.TrimSpace(cfg.Datasource.Tushare.Token) == "" {
+			return nil, nil
+		}
+
+		return tushareds.New(cfg.Datasource.Tushare.Token), nil
+	default:
+		return nil, fmt.Errorf("unsupported datasource default_source %q", cfg.Datasource.DefaultSource)
+	}
+}
+
 // Close 释放运行时持有的基础设施连接。
 func (r *ServerRuntime) Close() {
+	if r.sampleRuntime != nil {
+		r.sampleRuntime.Close()
+	}
 	if r.dbPool != nil {
 		r.dbPool.Close()
 	}
