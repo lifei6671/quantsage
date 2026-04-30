@@ -1,15 +1,19 @@
 package log
 
 import (
+	"io"
 	"log/slog"
 	"os"
+
+	"github.com/lifei6671/logit"
 )
 
 // New creates the default structured logger for QuantSage services.
 func New() *slog.Logger {
-	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	})
+	return newLogger(os.Stdout)
+}
 
-	return slog.New(handler)
+func newLogger(writer io.Writer) *slog.Logger {
+	base := logit.NewSimpleLogger(writer, logit.WithMinLevel(logit.InfoLevel))
+	return logit.NewSlogLogger(base, logit.WithSlogMinLevel(slog.LevelInfo))
 }

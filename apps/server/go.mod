@@ -10,6 +10,7 @@ require (
 	github.com/goccy/go-yaml v1.19.2
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/lib4u/fake-useragent v1.0.6
+	github.com/lifei6671/logit v1.0.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/shopspring/decimal v1.4.0
 	golang.org/x/crypto v0.48.0
