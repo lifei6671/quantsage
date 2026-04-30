@@ -46,6 +46,7 @@ type observeOptions struct {
 	idleTimeout   time.Duration
 	resourceTypes map[string]struct{}
 	matchers      []func(ResponseMetadata) bool
+	actions       []chromedp.Action
 }
 
 // WithObserveIdleTimeout 覆盖页面响应监听的空闲收口时间。
@@ -91,6 +92,17 @@ func WithObserveMatch(match func(ResponseMetadata) bool) ObserveOption {
 			return
 		}
 		opts.matchers = append(opts.matchers, match)
+	}
+}
+
+// WithObserveActions 允许在页面 ready 之后继续执行自定义浏览器动作。
+// 这些动作会与响应监听处于同一个页面上下文，适合触发懒加载、滚动分页等页面行为。
+func WithObserveActions(actions ...chromedp.Action) ObserveOption {
+	return func(opts *observeOptions) {
+		if len(actions) == 0 {
+			return
+		}
+		opts.actions = append(opts.actions, actions...)
 	}
 }
 
@@ -217,6 +229,16 @@ func (r *runner) observeResponses(
 				if timer == nil {
 					timer = time.NewTimer(options.idleTimeout)
 					timerCh = timer.C
+					if pendingCount > 0 {
+						if !timer.Stop() {
+							select {
+							case <-timer.C:
+							default:
+							}
+						}
+						timerCh = nil
+						continue
+					}
 					if pendingActivity && pendingCount == 0 {
 						resetObserveTimer(timer, options.idleTimeout)
 						pendingActivity = false
@@ -271,10 +293,14 @@ func (r *runner) observeResponses(
 		cfg,
 		pageURL,
 		func(pageURL string) []chromedp.Action {
-			return appendBrowserActions(cfg, []chromedp.Action{
+			actions := []chromedp.Action{
 				chromedp.Navigate(pageURL),
 				chromedp.WaitReady(cfg.WaitReadySelector, chromedp.ByQuery),
-			}, r.resolveUserAgent)
+			}
+			if len(options.actions) > 0 {
+				actions = append(actions, options.actions...)
+			}
+			return appendObserveBrowserActions(cfg, actions, r.resolveUserAgent)
 		},
 		func(tabCtx context.Context, runCtx context.Context) error {
 			listenTargetFunc(tabCtx, func(event any) {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 )
 
@@ -17,6 +18,13 @@ import (
 type Runner interface {
 	FetchCookieHeader(ctx context.Context, pageURL string) (string, error)
 	Run(ctx context.Context, pageURL string, opts ...RunOption) error
+	RunWithActions(
+		ctx context.Context,
+		pageURL string,
+		beforeNavigate []chromedp.Action,
+		afterReady []chromedp.Action,
+		opts ...RunOption,
+	) error
 	ObserveResponses(ctx context.Context, pageURL string, opts ...ObserveOption) (*ResponseStream, error)
 	Close(ctx context.Context) error
 	InvalidateCookies()
@@ -67,6 +75,22 @@ func WithRunWaitReadySelector(selector string) RunOption {
 	}
 }
 
+// WithRunPrimaryPageTarget 覆盖单次 Run 是否直接使用浏览器主页面 target。
+// 该模式会跳过子 tab，上层站点如果对二级 tab 敏感时可启用。
+func WithRunPrimaryPageTarget(enabled bool) RunOption {
+	return func(cfg *Config) {
+		cfg.UsePrimaryPageTarget = enabled
+	}
+}
+
+// WithRunRawPageNavigate 覆盖单次 Run 是否改用底层 page.Navigate。
+// 该模式不会等待整页 load 事件，更适合会长期停留在 interactive 状态的页面。
+func WithRunRawPageNavigate(enabled bool) RunOption {
+	return func(cfg *Config) {
+		cfg.UseRawPageNavigate = enabled
+	}
+}
+
 // WithRunDisableImages 覆盖单次 Run 是否阻止常见图片资源。
 func WithRunDisableImages(disabled bool) RunOption {
 	return func(cfg *Config) {
@@ -102,6 +126,7 @@ type browserWorker struct {
 	activeTabs       int
 	openedSinceStart int
 	recycling        bool
+	startupBroken    bool
 }
 
 type browserProcess struct {
@@ -214,6 +239,38 @@ func (r *runner) Run(ctx context.Context, pageURL string, opts ...RunOption) err
 	return runPageFunc(ctx, r, normalized, pageURL)
 }
 
+// RunWithActions 使用浏览器访问页面，并在导航前后追加调用方提供的动作。
+func (r *runner) RunWithActions(
+	ctx context.Context,
+	pageURL string,
+	beforeNavigate []chromedp.Action,
+	afterReady []chromedp.Action,
+	opts ...RunOption,
+) error {
+	if r == nil {
+		return fmt.Errorf("run browser fetch with actions: runner is nil")
+	}
+
+	cfg := r.publicConfig()
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&cfg)
+		}
+	}
+	normalized := normalizeConfig(cfg)
+
+	return r.runInTab(ctx, normalized, pageURL, func(pageURL string) []chromedp.Action {
+		navigateActions := buildNavigateActions(normalized, pageURL)
+		readyBarrierActions := buildAfterReadyBarrierActions(normalized, afterReady)
+		actions := make([]chromedp.Action, 0, len(beforeNavigate)+len(afterReady)+len(readyBarrierActions)+len(navigateActions))
+		actions = append(actions, beforeNavigate...)
+		actions = append(actions, navigateActions...)
+		actions = append(actions, readyBarrierActions...)
+		actions = append(actions, afterReady...)
+		return appendBrowserActions(normalized, actions, r.resolveUserAgent)
+	})
+}
+
 // Close 关闭浏览器进程并释放底层 chromedp 资源。
 func (r *runner) Close(ctx context.Context) error {
 	if r == nil {
@@ -278,25 +335,27 @@ func (r *runner) InvalidateCookies() {
 func (r *runner) publicConfig() Config {
 	headless := r.cfg.Headless
 	return Config{
-		BrowserPath:        r.cfg.BrowserPath,
-		Headless:           new(headless),
-		UserAgentMode:      r.cfg.UserAgentMode,
-		UserAgent:          r.cfg.UserAgent,
-		UserAgentPlatform:  r.cfg.UserAgentPlatform,
-		AcceptLanguage:     r.cfg.AcceptLanguage,
-		Timeout:            r.cfg.Timeout,
-		CookieCacheTTL:     r.cfg.CookieCacheTTL,
-		BrowserCount:       r.cfg.BrowserCount,
-		TabsPerBrowser:     r.cfg.TabsPerBrowser,
-		RecycleAfterTabs:   r.cfg.RecycleAfterTabs,
-		MaxConcurrentTabs:  r.cfg.MaxConcurrentTabs,
-		WaitReadySelector:  r.cfg.WaitReadySelector,
-		DisableImages:      r.cfg.DisableImages,
-		BlockedURLPatterns: append([]string(nil), r.cfg.BlockedURLPatterns...),
-		NoSandbox:          r.cfg.NoSandbox,
-		WindowWidth:        r.cfg.WindowWidth,
-		WindowHeight:       r.cfg.WindowHeight,
-		ExtraFlags:         append([]string(nil), r.cfg.ExtraFlags...),
+		BrowserPath:          r.cfg.BrowserPath,
+		Headless:             new(headless),
+		UserAgentMode:        r.cfg.UserAgentMode,
+		UserAgent:            r.cfg.UserAgent,
+		UserAgentPlatform:    r.cfg.UserAgentPlatform,
+		AcceptLanguage:       r.cfg.AcceptLanguage,
+		Timeout:              r.cfg.Timeout,
+		CookieCacheTTL:       r.cfg.CookieCacheTTL,
+		BrowserCount:         r.cfg.BrowserCount,
+		TabsPerBrowser:       r.cfg.TabsPerBrowser,
+		RecycleAfterTabs:     r.cfg.RecycleAfterTabs,
+		MaxConcurrentTabs:    r.cfg.MaxConcurrentTabs,
+		WaitReadySelector:    r.cfg.WaitReadySelector,
+		UsePrimaryPageTarget: r.cfg.UsePrimaryPageTarget,
+		UseRawPageNavigate:   r.cfg.UseRawPageNavigate,
+		DisableImages:        r.cfg.DisableImages,
+		BlockedURLPatterns:   append([]string(nil), r.cfg.BlockedURLPatterns...),
+		NoSandbox:            r.cfg.NoSandbox,
+		WindowWidth:          r.cfg.WindowWidth,
+		WindowHeight:         r.cfg.WindowHeight,
+		ExtraFlags:           append([]string(nil), r.cfg.ExtraFlags...),
 	}
 }
 
@@ -309,10 +368,7 @@ func runPage(ctx context.Context, r *runner, cfg normalizedConfig, pageURL strin
 	}
 
 	return r.runInTab(ctx, cfg, pageURL, func(pageURL string) []chromedp.Action {
-		return appendBrowserActions(cfg, []chromedp.Action{
-			chromedp.Navigate(pageURL),
-			chromedp.WaitReady(cfg.WaitReadySelector, chromedp.ByQuery),
-		}, r.resolveUserAgent)
+		return appendBrowserActions(cfg, buildNavigateActions(cfg, pageURL), r.resolveUserAgent)
 	})
 }
 
@@ -346,6 +402,10 @@ func (r *runner) runInTabWithHooks(
 	}
 	defer r.inflight.Done()
 
+	if cfg.UsePrimaryPageTarget {
+		return r.runInPrimaryTargetProcess(ctx, cfg, pageURL, buildActions, setup, afterRun)
+	}
+
 	if browserProcessKey(cfg) != browserProcessKey(r.cfg) {
 		return r.runInStandaloneProcess(ctx, cfg, pageURL, buildActions)
 	}
@@ -356,7 +416,7 @@ func (r *runner) runInTabWithHooks(
 	}
 	defer releaseWorker()
 
-	browserCtx, err := worker.ensureBrowser(ctx, cfg)
+	browserCtx, created, err := worker.ensureBrowser(ctx, cfg)
 	if err != nil {
 		return err
 	}
@@ -378,6 +438,62 @@ func (r *runner) runInTabWithHooks(
 
 	if setup != nil {
 		if err := setup(tabCtx, runCtx); err != nil {
+			if created {
+				worker.markStartupBroken(browserCtx)
+			}
+			return err
+		}
+	}
+	if err := runActionsFunc(runCtx, buildActions(pageURL)...); err != nil {
+		if created {
+			worker.markStartupBroken(browserCtx)
+		}
+		return fmt.Errorf("run browser for %s: %w", pageURL, err)
+	}
+	if afterRun != nil {
+		if err := afterRun(tabCtx, runCtx); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (r *runner) runInPrimaryTargetProcess(
+	ctx context.Context,
+	cfg normalizedConfig,
+	pageURL string,
+	buildActions func(string) []chromedp.Action,
+	setup func(tabCtx context.Context, runCtx context.Context) error,
+	afterRun func(tabCtx context.Context, runCtx context.Context) error,
+) error {
+	process, err := startBrowserProcessFunc(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("start primary-target browser fetch runner: %w", err)
+	}
+	managedProcess, err := r.trackStandaloneProcess(process)
+	if err != nil {
+		closeCtx, cancel := context.WithTimeout(context.Background(), defaultBrowserCloseTimeout)
+		_ = closeBrowserProcessFunc(closeCtx, process)
+		cancel()
+		return err
+	}
+	defer func() {
+		r.untrackStandaloneProcess(managedProcess)
+		closeCtx, cancel := context.WithTimeout(context.Background(), defaultBrowserCloseTimeout)
+		_ = managedProcess.close(closeCtx)
+		cancel()
+	}()
+
+	runCtx := process.ctx
+	var runCancel context.CancelFunc
+	if cfg.Timeout > 0 {
+		runCtx, runCancel = context.WithTimeout(process.ctx, cfg.Timeout)
+		defer runCancel()
+	}
+
+	if setup != nil {
+		if err := setup(process.ctx, runCtx); err != nil {
 			return err
 		}
 	}
@@ -385,7 +501,7 @@ func (r *runner) runInTabWithHooks(
 		return fmt.Errorf("run browser for %s: %w", pageURL, err)
 	}
 	if afterRun != nil {
-		if err := afterRun(tabCtx, runCtx); err != nil {
+		if err := afterRun(process.ctx, runCtx); err != nil {
 			return err
 		}
 	}
@@ -548,7 +664,7 @@ func (w *browserWorker) release() {
 		w.activeTabs--
 	}
 	if w.activeTabs == 0 {
-		shouldRecycle = w.openedSinceStart >= w.recycleAfterTabs
+		shouldRecycle = w.openedSinceStart >= w.recycleAfterTabs || w.startupBroken
 		if shouldRecycle {
 			w.recycling = true
 		}
@@ -577,20 +693,20 @@ func (w *browserWorker) markTabOpened() {
 	w.mu.Unlock()
 }
 
-func (w *browserWorker) ensureBrowser(ctx context.Context, cfg normalizedConfig) (context.Context, error) {
+func (w *browserWorker) ensureBrowser(ctx context.Context, cfg normalizedConfig) (context.Context, bool, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	processKey := browserProcessKey(cfg)
 	if w.browserCtx != nil {
 		if w.processKey != processKey {
-			return nil, errBrowserProcessConfigChanged
+			return nil, false, errBrowserProcessConfigChanged
 		}
-		return w.browserCtx, nil
+		return w.browserCtx, false, nil
 	}
 
 	process, err := startBrowserProcessFunc(ctx, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("start browser fetch runner: %w", err)
+		return nil, false, fmt.Errorf("start browser fetch runner: %w", err)
 	}
 
 	w.processKey = processKey
@@ -598,8 +714,9 @@ func (w *browserWorker) ensureBrowser(ctx context.Context, cfg normalizedConfig)
 	w.browserCtx = process.ctx
 	w.browserCancel = process.browserCancel
 	w.openedSinceStart = 0
+	w.startupBroken = false
 
-	return w.browserCtx, nil
+	return w.browserCtx, true, nil
 }
 
 func (w *browserWorker) closeBrowser(ctx context.Context) error {
@@ -613,6 +730,7 @@ func (w *browserWorker) closeBrowser(ctx context.Context) error {
 	w.allocCancel = nil
 	w.browserCancel = nil
 	w.openedSinceStart = 0
+	w.startupBroken = false
 	w.mu.Unlock()
 
 	if process.ctx == nil && process.allocCancel == nil && process.browserCancel == nil {
@@ -620,6 +738,15 @@ func (w *browserWorker) closeBrowser(ctx context.Context) error {
 	}
 
 	return closeBrowserProcessFunc(ctx, process)
+}
+
+func (w *browserWorker) markStartupBroken(browserCtx context.Context) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.browserCtx != browserCtx {
+		return
+	}
+	w.startupBroken = true
 }
 
 func startBrowserProcess(ctx context.Context, cfg normalizedConfig) (browserProcess, error) {
@@ -631,13 +758,6 @@ func startBrowserProcess(ctx context.Context, cfg normalizedConfig) (browserProc
 
 	allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(), opts...)
 	browserCtx, browserCancel := chromedp.NewContext(allocCtx)
-	initCtx, initCancel := context.WithTimeout(browserCtx, cfg.Timeout)
-	defer initCancel()
-	if err := runActionsFunc(initCtx); err != nil {
-		browserCancel()
-		allocCancel()
-		return browserProcess{}, err
-	}
 
 	select {
 	case <-ctx.Done():
@@ -752,6 +872,38 @@ func parseChromeFlag(flag string) (string, any) {
 	return name, strings.TrimSpace(value)
 }
 
+func buildNavigateActions(cfg normalizedConfig, pageURL string) []chromedp.Action {
+	if cfg.UseRawPageNavigate {
+		return []chromedp.Action{
+			chromedp.ActionFunc(func(ctx context.Context) error {
+				_, _, errorText, _, err := page.Navigate(pageURL).Do(ctx)
+				if err != nil {
+					return err
+				}
+				if trimmed := strings.TrimSpace(errorText); trimmed != "" {
+					return fmt.Errorf("navigate page %s: %s", pageURL, trimmed)
+				}
+				return nil
+			}),
+		}
+	}
+
+	return []chromedp.Action{
+		chromedp.Navigate(pageURL),
+		chromedp.WaitReady(cfg.WaitReadySelector, chromedp.ByQuery),
+	}
+}
+
+func buildAfterReadyBarrierActions(cfg normalizedConfig, afterReady []chromedp.Action) []chromedp.Action {
+	if len(afterReady) == 0 || !cfg.UseRawPageNavigate {
+		return nil
+	}
+
+	return []chromedp.Action{
+		chromedp.WaitReady(cfg.WaitReadySelector, chromedp.ByQuery),
+	}
+}
+
 func appendBrowserActions(cfg normalizedConfig, actions []chromedp.Action, resolve userAgentResolver) []chromedp.Action {
 	preflight := []chromedp.Action{
 		network.Enable(),
@@ -767,6 +919,10 @@ func appendBrowserActions(cfg normalizedConfig, actions []chromedp.Action, resol
 	}
 
 	return append(preflight, actions...)
+}
+
+func appendObserveBrowserActions(cfg normalizedConfig, actions []chromedp.Action, resolve userAgentResolver) []chromedp.Action {
+	return appendBrowserActions(cfg, actions, resolve)
 }
 
 func buildBlockedURLPatterns(cfg normalizedConfig) []*network.BlockPattern {

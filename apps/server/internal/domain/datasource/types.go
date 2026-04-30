@@ -103,10 +103,37 @@ type KLineStreamItem struct {
 
 // Source 定义 QuantSage 对外部数据源的最小读取契约。
 type Source interface {
+	// ListStocks 返回当前数据源可枚举的股票基础信息。
+	// 这个方法主要服务于“全市场同步”类任务，因此实现方应尽量返回稳定、可重复抓取的全集结果，
+	// 而不是带页面上下文或临时过滤条件的局部结果。
+	// 如果某个数据源天然不具备批量股票列表能力，应返回明确的“不支持”错误，而不是返回空切片伪装成功。
 	ListStocks(ctx context.Context) ([]StockBasic, error)
+
+	// ListTradeCalendar 返回指定交易所、指定日期区间内的交易日历。
+	// 调用方依赖它判断某天是否开市、以及补数/对账任务的日期边界，因此实现方需要保证：
+	// 1. 返回结果只包含 [startDate, endDate] 区间内的数据；
+	// 2. 日期语义稳定，避免把时分秒或本地时区细节泄漏给上层；
+	// 3. exchange 不支持时返回明确错误，便于调用方降级或停止任务。
 	ListTradeCalendar(ctx context.Context, exchange string, startDate, endDate time.Time) ([]TradeDay, error)
+
+	// ListDailyBars 返回一个日期区间内的日线行情集合。
+	// 该接口面向“批量导入”而不是单票查询：实现方可以按自身能力抓取全市场、分批汇总后统一返回，
+	// 但最终结果必须是标准化后的 DailyBar 切片，不能把分页状态、流式事件或浏览器细节暴露到接口外。
+	// 后续如果单票、多周期需求变复杂，优先放到 ListKLines，而不是继续扩展这个日线批量接口。
 	ListDailyBars(ctx context.Context, startDate, endDate time.Time) ([]DailyBar, error)
+
+	// ListKLines 返回单只股票在指定周期下的标准化 K 线结果。
+	// 它面向“查询能力”而非“全量导入能力”，维护时需要重点保持以下约束：
+	// 1. 入参语义遵循 KLineQuery / NormalizeKLineQuery 的统一规则；
+	// 2. 返回结果按 TradeTime 升序排列，便于上层直接做裁剪、指标计算和展示；
+	// 3. 默认返回原始行情，不在这里隐式加入复权、缓存命中来源或页面采集细节；
+	// 4. 某个周期不支持时返回显式错误，避免静默降级到别的周期或空结果。
 	ListKLines(ctx context.Context, query KLineQuery) ([]KLine, error)
+
+	// StreamKLines 返回流式 K 线事件通道，适合页面驱动型或实时推送型数据源。
+	// 实现方应把底层多次响应整理成 KLineStreamItem 批次后再向外输出，并在通道关闭前保证错误可观测。
+	// 对于只支持一次性查询的数据源，允许直接返回 UnsupportedStreamError；
+	// 但一旦声明支持流式语义，就不应把它退化成“内部先收完再一次性吐出”的假流式实现。
 	StreamKLines(ctx context.Context, query KLineQuery) (<-chan KLineStreamItem, error)
 }
 

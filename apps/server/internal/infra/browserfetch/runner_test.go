@@ -447,6 +447,49 @@ func TestObserveResponsesDoesNotTimeOutBeforePageReady(t *testing.T) {
 	}
 }
 
+func TestObserveResponsesExecutesObserveActionsBeforeIdleStarts(t *testing.T) {
+	stubObserveHooks(t)
+
+	actionRan := make(chan struct{}, 1)
+	runActionsFunc = func(ctx context.Context, actions ...chromedp.Action) error {
+		if len(actions) == 0 {
+			t.Fatal("len(actions) = 0, want observe actions to be present")
+		}
+		if err := actions[len(actions)-1].Do(ctx); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	stream, err := New(Config{}).ObserveResponses(
+		context.Background(),
+		"https://quote.example.com/stock/000001",
+		WithObserveIdleTimeout(10*time.Millisecond),
+		WithObserveActions(chromedp.ActionFunc(func(context.Context) error {
+			actionRan <- struct{}{}
+			return nil
+		})),
+	)
+	if err != nil {
+		t.Fatalf("ObserveResponses() error = %v", err)
+	}
+
+	select {
+	case <-actionRan:
+	case <-time.After(time.Second):
+		t.Fatal("observe action was not executed")
+	}
+
+	select {
+	case err := <-stream.Done:
+		if !errors.Is(err, errObserveNoMatchingResponse) {
+			t.Fatalf("stream.Done = %v, want %v", err, errObserveNoMatchingResponse)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("stream did not stop after idle timeout")
+	}
+}
+
 func TestObserveResponsesWaitsForBodyWorkersBeforeClosingStreamOnRunError(t *testing.T) {
 	stubObserveHooks(t)
 
@@ -610,6 +653,8 @@ func TestRunOptionAppliesToRunConfig(t *testing.T) {
 		WithRunHeadless(false),
 		WithRunTimeout(42*time.Second),
 		WithRunWaitReadySelector("#app"),
+		WithRunPrimaryPageTarget(true),
+		WithRunRawPageNavigate(true),
 		WithRunDisableImages(true),
 	); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -624,11 +669,307 @@ func TestRunOptionAppliesToRunConfig(t *testing.T) {
 	if gotConfig.WaitReadySelector != "#app" {
 		t.Fatalf("WaitReadySelector = %q, want %q", gotConfig.WaitReadySelector, "#app")
 	}
+	if !gotConfig.UsePrimaryPageTarget {
+		t.Fatal("UsePrimaryPageTarget = false, want true")
+	}
+	if !gotConfig.UseRawPageNavigate {
+		t.Fatal("UseRawPageNavigate = false, want true")
+	}
 	if !gotConfig.DisableImages {
 		t.Fatal("DisableImages = false, want true")
 	}
 	if gotPageURL != "https://example.com/page" {
 		t.Fatalf("pageURL = %q, want %q", gotPageURL, "https://example.com/page")
+	}
+}
+
+func TestRunPrependsNetworkEnableByDefault(t *testing.T) {
+	stubObserveHooks(t)
+
+	actionCountCh := make(chan int, 1)
+	runActionsFunc = func(_ context.Context, actions ...chromedp.Action) error {
+		actionCountCh <- len(actions)
+		return nil
+	}
+
+	r := New(Config{})
+	defer func() {
+		if err := r.Close(context.Background()); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	}()
+
+	if err := r.Run(context.Background(), "https://example.com/page"); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	select {
+	case got := <-actionCountCh:
+		if got != 3 {
+			t.Fatalf("len(actions) = %d, want %d (network enable + navigate + wait ready)", got, 3)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("did not capture run action count")
+	}
+}
+
+func TestRunRawPageNavigateSkipsWaitReadyAction(t *testing.T) {
+	stubObserveHooks(t)
+
+	actionCountCh := make(chan int, 1)
+	runActionsFunc = func(_ context.Context, actions ...chromedp.Action) error {
+		actionCountCh <- len(actions)
+		return nil
+	}
+
+	r := New(Config{})
+	defer func() {
+		if err := r.Close(context.Background()); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	}()
+
+	if err := r.Run(
+		context.Background(),
+		"https://example.com/page",
+		WithRunRawPageNavigate(true),
+	); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	select {
+	case got := <-actionCountCh:
+		if got != 2 {
+			t.Fatalf("len(actions) = %d, want %d (network enable + raw page navigate)", got, 2)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("did not capture run action count")
+	}
+}
+
+func TestAppendBrowserActionsPutsNetworkEnableBeforeBlockedURLs(t *testing.T) {
+	t.Parallel()
+
+	actions := appendBrowserActions(
+		normalizeConfig(Config{DisableImages: true}),
+		buildNavigateActions(normalizeConfig(Config{}), "https://example.com/page"),
+		nil,
+	)
+	if len(actions) < 4 {
+		t.Fatalf("len(actions) = %d, want at least 4", len(actions))
+	}
+	if _, ok := actions[0].(*network.EnableParams); !ok {
+		t.Fatalf("actions[0] = %T, want *network.EnableParams", actions[0])
+	}
+	if _, ok := actions[1].(*network.SetBlockedURLsParams); !ok {
+		t.Fatalf("actions[1] = %T, want *network.SetBlockedURLsParams", actions[1])
+	}
+}
+
+func TestRunPrimaryPageTargetSkipsChildTabCreation(t *testing.T) {
+	restore := stubBrowserProcessHooks(t)
+
+	var newTabCalls int
+	originalNewTab := newTabContextFunc
+	newTabContextFunc = func(parent context.Context, opts ...chromedp.ContextOption) (context.Context, context.CancelFunc) {
+		newTabCalls++
+		return originalNewTab(parent, opts...)
+	}
+	t.Cleanup(func() {
+		newTabContextFunc = originalNewTab
+	})
+
+	runCalls := 0
+	restore.onRun = func() {
+		runCalls++
+	}
+
+	r := New(Config{})
+	defer func() {
+		if err := r.Close(context.Background()); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	}()
+
+	if err := r.Run(
+		context.Background(),
+		"https://example.com/page",
+		WithRunPrimaryPageTarget(true),
+	); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if newTabCalls != 0 {
+		t.Fatalf("newTabCalls = %d, want 0", newTabCalls)
+	}
+	if runCalls != 1 {
+		t.Fatalf("runCalls = %d, want %d (page run only in stubbed process)", runCalls, 1)
+	}
+}
+
+func TestRunRestartsWorkerBrowserAfterInitialStartupFailure(t *testing.T) {
+	restore := stubBrowserProcessHooks(t)
+
+	startCalls := 0
+	restore.onStart = func() {
+		startCalls++
+	}
+
+	runCalls := 0
+	runActionsFunc = func(_ context.Context, actions ...chromedp.Action) error {
+		runCalls++
+		if runCalls == 1 {
+			return errors.New("startup failed")
+		}
+		return nil
+	}
+
+	r := New(Config{
+		BrowserCount:   1,
+		TabsPerBrowser: 1,
+	})
+	defer func() {
+		if err := r.Close(context.Background()); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	}()
+
+	if err := r.Run(context.Background(), "https://example.com/page"); err == nil {
+		t.Fatal("first Run() error = nil, want startup failure")
+	}
+	if err := r.Run(context.Background(), "https://example.com/page"); err != nil {
+		t.Fatalf("second Run() error = %v", err)
+	}
+	if startCalls != 2 {
+		t.Fatalf("startCalls = %d, want %d after restart on first-run failure", startCalls, 2)
+	}
+}
+
+func TestObserveResponsesPrependsNetworkEnable(t *testing.T) {
+	stubObserveHooks(t)
+
+	actionCountCh := make(chan int, 1)
+	runActionsFunc = func(_ context.Context, actions ...chromedp.Action) error {
+		actionCountCh <- len(actions)
+		return nil
+	}
+
+	stream, err := New(Config{}).ObserveResponses(
+		context.Background(),
+		"https://example.com/page",
+		WithObserveIdleTimeout(10*time.Millisecond),
+	)
+	if err != nil {
+		t.Fatalf("ObserveResponses() error = %v", err)
+	}
+
+	select {
+	case got := <-actionCountCh:
+		if got != 3 {
+			t.Fatalf("len(actions) = %d, want %d (network enable + navigate + wait ready)", got, 3)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("did not capture observe action count")
+	}
+
+	select {
+	case err := <-stream.Done:
+		if !errors.Is(err, errObserveNoMatchingResponse) {
+			t.Fatalf("stream.Done = %v, want %v", err, errObserveNoMatchingResponse)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("stream did not stop after idle timeout")
+	}
+}
+
+func TestRunWithActionsExecutesCustomActions(t *testing.T) {
+	stubObserveHooks(t)
+
+	beforeRan := false
+	afterRan := false
+	runActionsFunc = func(ctx context.Context, actions ...chromedp.Action) error {
+		if len(actions) < 3 {
+			t.Fatalf("len(actions) = %d, want at least 3", len(actions))
+		}
+		if err := actions[1].Do(ctx); err != nil {
+			return err
+		}
+		if err := actions[len(actions)-1].Do(ctx); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	r := New(Config{WaitReadySelector: "body"})
+	defer func() {
+		if err := r.Close(context.Background()); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	}()
+
+	err := r.RunWithActions(
+		context.Background(),
+		"https://example.com/page",
+		[]chromedp.Action{
+			chromedp.ActionFunc(func(context.Context) error {
+				beforeRan = true
+				return nil
+			}),
+		},
+		[]chromedp.Action{
+			chromedp.ActionFunc(func(context.Context) error {
+				afterRan = true
+				return nil
+			}),
+		},
+	)
+	if err != nil {
+		t.Fatalf("RunWithActions() error = %v", err)
+	}
+	if !beforeRan {
+		t.Fatal("beforeRan = false, want true")
+	}
+	if !afterRan {
+		t.Fatal("afterRan = false, want true")
+	}
+}
+
+func TestRunWithActionsRawNavigateAddsReadyBarrierBeforeAfterReady(t *testing.T) {
+	stubObserveHooks(t)
+
+	actionCountCh := make(chan int, 1)
+	runActionsFunc = func(_ context.Context, actions ...chromedp.Action) error {
+		actionCountCh <- len(actions)
+		return nil
+	}
+
+	r := New(Config{WaitReadySelector: "body"})
+	defer func() {
+		if err := r.Close(context.Background()); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	}()
+
+	err := r.RunWithActions(
+		context.Background(),
+		"https://example.com/page",
+		nil,
+		[]chromedp.Action{
+			chromedp.ActionFunc(func(context.Context) error { return nil }),
+		},
+		WithRunRawPageNavigate(true),
+	)
+	if err != nil {
+		t.Fatalf("RunWithActions() error = %v", err)
+	}
+
+	select {
+	case got := <-actionCountCh:
+		if got != 4 {
+			t.Fatalf("len(actions) = %d, want %d (network enable + raw navigate + wait ready + afterReady)", got, 4)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("did not capture run action count")
 	}
 }
 

@@ -8,6 +8,8 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+var eastMoneyMarketLocation = time.FixedZone("Asia/Shanghai", 8*3600)
+
 // ParsedKLine 是东财 K 线文本行解析后的标准结构。
 type ParsedKLine struct {
 	TradeTime    time.Time
@@ -101,11 +103,13 @@ func parseKLineRow(entityID string, interval Interval, row string) (ParsedKLine,
 
 func parseKLineTime(interval Interval, value string) (time.Time, error) {
 	layout := eastMoneyDateLayout
+	location := time.UTC
 	if isMinuteInterval(interval) {
 		layout = eastMoneyMinuteLayout
+		location = eastMoneyMarketLocation
 	}
 
-	return time.ParseInLocation(layout, strings.TrimSpace(value), time.UTC)
+	return time.ParseInLocation(layout, strings.TrimSpace(value), location)
 }
 
 func isMinuteInterval(interval Interval) bool {

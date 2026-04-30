@@ -34,47 +34,51 @@ const (
 
 // Config 定义 browserfetch 的基础运行参数。
 type Config struct {
-	BrowserPath        string
-	Headless           *bool
-	UserAgentMode      string
-	UserAgent          string
-	UserAgentPlatform  string
-	AcceptLanguage     string
-	Timeout            time.Duration
-	CookieCacheTTL     time.Duration
-	BrowserCount       int
-	TabsPerBrowser     int
-	RecycleAfterTabs   int
-	MaxConcurrentTabs  int
-	WaitReadySelector  string
-	DisableImages      bool
-	BlockedURLPatterns []string
-	NoSandbox          bool
-	WindowWidth        int
-	WindowHeight       int
-	ExtraFlags         []string
+	BrowserPath          string
+	Headless             *bool
+	UserAgentMode        string
+	UserAgent            string
+	UserAgentPlatform    string
+	AcceptLanguage       string
+	Timeout              time.Duration
+	CookieCacheTTL       time.Duration
+	BrowserCount         int
+	TabsPerBrowser       int
+	RecycleAfterTabs     int
+	MaxConcurrentTabs    int
+	WaitReadySelector    string
+	UsePrimaryPageTarget bool
+	UseRawPageNavigate   bool
+	DisableImages        bool
+	BlockedURLPatterns   []string
+	NoSandbox            bool
+	WindowWidth          int
+	WindowHeight         int
+	ExtraFlags           []string
 }
 
 type normalizedConfig struct {
-	BrowserPath        string
-	Headless           bool
-	UserAgentMode      string
-	UserAgent          string
-	UserAgentPlatform  string
-	AcceptLanguage     string
-	Timeout            time.Duration
-	CookieCacheTTL     time.Duration
-	BrowserCount       int
-	TabsPerBrowser     int
-	RecycleAfterTabs   int
-	MaxConcurrentTabs  int
-	WaitReadySelector  string
-	DisableImages      bool
-	BlockedURLPatterns []string
-	NoSandbox          bool
-	WindowWidth        int
-	WindowHeight       int
-	ExtraFlags         []string
+	BrowserPath          string
+	Headless             bool
+	UserAgentMode        string
+	UserAgent            string
+	UserAgentPlatform    string
+	AcceptLanguage       string
+	Timeout              time.Duration
+	CookieCacheTTL       time.Duration
+	BrowserCount         int
+	TabsPerBrowser       int
+	RecycleAfterTabs     int
+	MaxConcurrentTabs    int
+	WaitReadySelector    string
+	UsePrimaryPageTarget bool
+	UseRawPageNavigate   bool
+	DisableImages        bool
+	BlockedURLPatterns   []string
+	NoSandbox            bool
+	WindowWidth          int
+	WindowHeight         int
+	ExtraFlags           []string
 }
 
 // normalizeConfig 应用默认值并裁剪空白字符。
@@ -135,25 +139,27 @@ func normalizeConfig(cfg Config) normalizedConfig {
 	}
 
 	return normalizedConfig{
-		BrowserPath:        normalizeBrowserPath(cfg.BrowserPath),
-		Headless:           headless,
-		UserAgentMode:      userAgentMode,
-		UserAgent:          strings.TrimSpace(cfg.UserAgent),
-		UserAgentPlatform:  userAgentPlatform,
-		AcceptLanguage:     acceptLanguage,
-		Timeout:            timeout,
-		CookieCacheTTL:     cacheTTL,
-		BrowserCount:       browserCount,
-		TabsPerBrowser:     tabsPerBrowser,
-		RecycleAfterTabs:   recycleAfterTabs,
-		MaxConcurrentTabs:  tabsPerBrowser,
-		WaitReadySelector:  waitReadySelector,
-		DisableImages:      cfg.DisableImages,
-		BlockedURLPatterns: compactStringSlice(cfg.BlockedURLPatterns),
-		NoSandbox:          cfg.NoSandbox,
-		WindowWidth:        windowWidth,
-		WindowHeight:       windowHeight,
-		ExtraFlags:         compactStringSlice(cfg.ExtraFlags),
+		BrowserPath:          normalizeBrowserPath(cfg.BrowserPath),
+		Headless:             headless,
+		UserAgentMode:        userAgentMode,
+		UserAgent:            strings.TrimSpace(cfg.UserAgent),
+		UserAgentPlatform:    userAgentPlatform,
+		AcceptLanguage:       acceptLanguage,
+		Timeout:              timeout,
+		CookieCacheTTL:       cacheTTL,
+		BrowserCount:         browserCount,
+		TabsPerBrowser:       tabsPerBrowser,
+		RecycleAfterTabs:     recycleAfterTabs,
+		MaxConcurrentTabs:    tabsPerBrowser,
+		WaitReadySelector:    waitReadySelector,
+		UsePrimaryPageTarget: cfg.UsePrimaryPageTarget,
+		UseRawPageNavigate:   cfg.UseRawPageNavigate,
+		DisableImages:        cfg.DisableImages,
+		BlockedURLPatterns:   compactStringSlice(cfg.BlockedURLPatterns),
+		NoSandbox:            cfg.NoSandbox,
+		WindowWidth:          windowWidth,
+		WindowHeight:         windowHeight,
+		ExtraFlags:           compactStringSlice(cfg.ExtraFlags),
 	}
 }
 
