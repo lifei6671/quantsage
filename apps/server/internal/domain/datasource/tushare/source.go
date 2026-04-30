@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -243,6 +244,45 @@ func (s *Source) ListDailyBars(ctx context.Context, startDate, endDate time.Time
 	return items, nil
 }
 
+// ListKLines 返回 Tushare 当前支持的单票日线 K 线。
+func (s *Source) ListKLines(ctx context.Context, query datasource.KLineQuery) ([]datasource.KLine, error) {
+	if err := s.requireToken(); err != nil {
+		return nil, err
+	}
+
+	normalizedQuery, err := datasource.NormalizeKLineQuery(query, time.Now)
+	if err != nil {
+		return nil, err
+	}
+	if normalizedQuery.Interval != datasource.IntervalDay {
+		return nil, apperror.New(
+			apperror.CodeDatasourceUnavailable,
+			fmt.Errorf("tushare datasource does not support interval %s", normalizedQuery.Interval),
+		)
+	}
+
+	params := buildDailyKLineParams(normalizedQuery)
+	data, err := s.query(ctx, "daily", params, dailyFields)
+	if err != nil {
+		return nil, err
+	}
+
+	items, err := mapTushareDailyDataToKLines(normalizedQuery, data)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].TradeTime.Before(items[j].TradeTime)
+	})
+
+	return datasource.TrimKLinesByLimit(items, normalizedQuery.Limit), nil
+}
+
+// StreamKLines 当前 Tushare 数据源不支持流式 K 线接口。
+func (s *Source) StreamKLines(context.Context, datasource.KLineQuery) (<-chan datasource.KLineStreamItem, error) {
+	return nil, datasource.UnsupportedStreamError("tushare")
+}
+
 func (s *Source) requireToken() error {
 	if s.token != "" {
 		return nil
@@ -380,4 +420,96 @@ func sameDate(left, right time.Time) bool {
 		return false
 	}
 	return formatDate(left) == formatDate(right)
+}
+
+func buildDailyKLineParams(query datasource.KLineQuery) map[string]string {
+	params := map[string]string{
+		"ts_code": strings.TrimSpace(query.TSCode),
+	}
+	if query.Limit > 0 {
+		params["end_date"] = formatDate(query.EndTime)
+		return params
+	}
+
+	params["start_date"] = formatDate(query.StartTime)
+	params["end_date"] = formatDate(query.EndTime)
+	return params
+}
+
+func mapTushareDailyDataToKLines(query datasource.KLineQuery, data tushareData) ([]datasource.KLine, error) {
+	items := make([]datasource.KLine, 0, len(data.Items))
+	for _, rawItem := range data.Items {
+		row, err := buildRow(data.Fields, rawItem)
+		if err != nil {
+			return nil, datasourceUnavailable(fmt.Errorf("map tushare daily row: %w", err))
+		}
+		if tsCode := stringField(row, "ts_code"); tsCode != query.TSCode {
+			continue
+		}
+
+		tradeDate, err := parseDateField(row, "trade_date")
+		if err != nil {
+			return nil, datasourceUnavailable(fmt.Errorf("parse tushare daily trade_date: %w", err))
+		}
+		if query.Limit <= 0 && (tradeDate.Before(query.StartTime) || tradeDate.After(query.EndTime)) {
+			continue
+		}
+		if query.Limit > 0 && tradeDate.After(query.EndTime) {
+			continue
+		}
+
+		open, err := decimalField(row, "open")
+		if err != nil {
+			return nil, datasourceUnavailable(fmt.Errorf("parse tushare daily open: %w", err))
+		}
+		high, err := decimalField(row, "high")
+		if err != nil {
+			return nil, datasourceUnavailable(fmt.Errorf("parse tushare daily high: %w", err))
+		}
+		low, err := decimalField(row, "low")
+		if err != nil {
+			return nil, datasourceUnavailable(fmt.Errorf("parse tushare daily low: %w", err))
+		}
+		closePrice, err := decimalField(row, "close")
+		if err != nil {
+			return nil, datasourceUnavailable(fmt.Errorf("parse tushare daily close: %w", err))
+		}
+		preClose, err := decimalField(row, "pre_close")
+		if err != nil {
+			return nil, datasourceUnavailable(fmt.Errorf("parse tushare daily pre_close: %w", err))
+		}
+		change, err := decimalField(row, "change")
+		if err != nil {
+			return nil, datasourceUnavailable(fmt.Errorf("parse tushare daily change: %w", err))
+		}
+		pctChg, err := decimalField(row, "pct_chg")
+		if err != nil {
+			return nil, datasourceUnavailable(fmt.Errorf("parse tushare daily pct_chg: %w", err))
+		}
+		vol, err := decimalField(row, "vol")
+		if err != nil {
+			return nil, datasourceUnavailable(fmt.Errorf("parse tushare daily vol: %w", err))
+		}
+		amount, err := decimalField(row, "amount")
+		if err != nil {
+			return nil, datasourceUnavailable(fmt.Errorf("parse tushare daily amount: %w", err))
+		}
+
+		items = append(items, datasource.KLine{
+			TSCode:    query.TSCode,
+			TradeTime: tradeDate,
+			Open:      open,
+			High:      high,
+			Low:       low,
+			Close:     closePrice,
+			PreClose:  preClose,
+			Change:    change,
+			PctChg:    pctChg,
+			Vol:       vol,
+			Amount:    amount,
+			Source:    sourceName,
+		})
+	}
+
+	return items, nil
 }

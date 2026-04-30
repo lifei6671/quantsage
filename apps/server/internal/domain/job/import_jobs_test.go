@@ -64,6 +64,14 @@ func (s *fakeSource) ListDailyBars(ctx context.Context, startDate, endDate time.
 	return s.bars, nil
 }
 
+func (s *fakeSource) ListKLines(ctx context.Context, query datasource.KLineQuery) ([]datasource.KLine, error) {
+	return nil, nil
+}
+
+func (s *fakeSource) StreamKLines(ctx context.Context, query datasource.KLineQuery) (<-chan datasource.KLineStreamItem, error) {
+	return nil, datasource.UnsupportedStreamError("fake")
+}
+
 type fakeStockBasicWriter struct {
 	items []datasource.StockBasic
 	err   error

@@ -468,6 +468,14 @@ func (s *noopSampleSource) ListDailyBars(ctx context.Context, startDate, endDate
 	return append([]datasource.DailyBar(nil), s.bars...), nil
 }
 
+func (s *noopSampleSource) ListKLines(ctx context.Context, query datasource.KLineQuery) ([]datasource.KLine, error) {
+	return nil, nil
+}
+
+func (s *noopSampleSource) StreamKLines(ctx context.Context, query datasource.KLineQuery) (<-chan datasource.KLineStreamItem, error) {
+	return nil, datasource.UnsupportedStreamError("sample")
+}
+
 func (s *noopSampleSource) Close(context.Context) error {
 	s.closeCalls++
 	return nil

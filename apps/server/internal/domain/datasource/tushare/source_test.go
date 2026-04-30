@@ -12,6 +12,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
+	"github.com/lifei6671/quantsage/apps/server/internal/domain/datasource"
 	"github.com/lifei6671/quantsage/apps/server/internal/pkg/apperror"
 )
 
@@ -183,6 +184,106 @@ func TestTushareBusinessError(t *testing.T) {
 	}
 	if err == nil || !strings.Contains(err.Error(), "没有权限") {
 		t.Fatalf("ListStocks() error = %v, want tushare message", err)
+	}
+}
+
+func TestListKLinesSupportsDayInterval(t *testing.T) {
+	t.Parallel()
+
+	source := newTestSource(t, func(request tushareRequest) any {
+		if request.APIName != "daily" {
+			t.Fatalf("request.APIName = %q, want %q", request.APIName, "daily")
+		}
+		if request.Params["ts_code"] != "000001.SZ" {
+			t.Fatalf("request.Params[ts_code] = %q, want %q", request.Params["ts_code"], "000001.SZ")
+		}
+		if request.Params["end_date"] != "20260429" {
+			t.Fatalf("request.Params[end_date] = %q, want %q", request.Params["end_date"], "20260429")
+		}
+		return responseBody([]string{"ts_code", "trade_date", "open", "high", "low", "close", "pre_close", "change", "pct_chg", "vol", "amount"}, [][]any{
+			{"000001.SZ", "20260429", "10.10", "10.40", "10.00", "10.30", "10.00", "0.30", "3.00", "12345", "67890"},
+		})
+	})
+
+	items, err := source.ListKLines(context.Background(), datasource.KLineQuery{
+		TSCode:   "000001.SZ",
+		Interval: datasource.IntervalDay,
+		EndTime:  time.Date(2026, 4, 29, 15, 0, 0, 0, time.FixedZone("CST", 8*3600)),
+		Limit:    1,
+	})
+	if err != nil {
+		t.Fatalf("ListKLines() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("len(items) = %d, want %d", len(items), 1)
+	}
+	if !items[0].Close.Equal(decimal.RequireFromString("10.30")) {
+		t.Fatalf("items[0].Close = %s, want 10.30", items[0].Close)
+	}
+}
+
+func TestListKLinesPreservesLocalCalendarDateRange(t *testing.T) {
+	t.Parallel()
+
+	source := newTestSource(t, func(request tushareRequest) any {
+		if request.APIName != "daily" {
+			t.Fatalf("request.APIName = %q, want %q", request.APIName, "daily")
+		}
+		if request.Params["start_date"] != "20260429" {
+			t.Fatalf("request.Params[start_date] = %q, want %q", request.Params["start_date"], "20260429")
+		}
+		if request.Params["end_date"] != "20260429" {
+			t.Fatalf("request.Params[end_date] = %q, want %q", request.Params["end_date"], "20260429")
+		}
+		return responseBody([]string{"ts_code", "trade_date", "open", "high", "low", "close", "pre_close", "change", "pct_chg", "vol", "amount"}, [][]any{
+			{"000001.SZ", "20260429", "10.10", "10.40", "10.00", "10.30", "10.00", "0.30", "3.00", "12345", "67890"},
+		})
+	})
+
+	cst := time.FixedZone("CST", 8*3600)
+	items, err := source.ListKLines(context.Background(), datasource.KLineQuery{
+		TSCode:    "000001.SZ",
+		Interval:  datasource.IntervalDay,
+		StartTime: time.Date(2026, 4, 29, 0, 0, 0, 0, cst),
+		EndTime:   time.Date(2026, 4, 29, 0, 0, 0, 0, cst),
+	})
+	if err != nil {
+		t.Fatalf("ListKLines() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("len(items) = %d, want %d", len(items), 1)
+	}
+}
+
+func TestListKLinesRejectsUnsupportedMinuteInterval(t *testing.T) {
+	t.Parallel()
+
+	source := New("configured-token")
+
+	_, err := source.ListKLines(context.Background(), datasource.KLineQuery{
+		TSCode:   "000001.SZ",
+		Interval: datasource.Interval5Min,
+		Limit:    10,
+	})
+	if err == nil {
+		t.Fatal("ListKLines() error = nil, want non-nil")
+	}
+	if code := apperror.CodeOf(err); code != apperror.CodeDatasourceUnavailable {
+		t.Fatalf("ListKLines() code = %d, want %d", code, apperror.CodeDatasourceUnavailable)
+	}
+}
+
+func TestStreamKLinesReturnsUnsupported(t *testing.T) {
+	t.Parallel()
+
+	source := New("configured-token")
+	_, err := source.StreamKLines(context.Background(), datasource.KLineQuery{
+		TSCode:   "000001.SZ",
+		Interval: datasource.IntervalDay,
+		Limit:    1,
+	})
+	if err == nil {
+		t.Fatal("StreamKLines() error = nil, want non-nil")
 	}
 }
 

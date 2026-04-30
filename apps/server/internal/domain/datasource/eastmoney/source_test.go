@@ -10,6 +10,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
+	"github.com/lifei6671/quantsage/apps/server/internal/domain/datasource"
 	"github.com/lifei6671/quantsage/apps/server/internal/infra/browserfetch"
 	"github.com/lifei6671/quantsage/apps/server/internal/pkg/apperror"
 )
@@ -283,6 +284,183 @@ func TestSourceListTradeCalendarFallsBackToBrowserCookieAfterHTMLAntiBot(t *test
 	}
 	if requests != 2 {
 		t.Fatalf("requests = %d, want %d", requests, 2)
+	}
+}
+
+func TestSourceListKLinesMapsMinuteRows(t *testing.T) {
+	t.Parallel()
+
+	source := newTestSource(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != historyKLinePath {
+			t.Fatalf("request path = %q, want %q", req.URL.Path, historyKLinePath)
+		}
+		if got := req.URL.Query().Get("klt"); got != "5" {
+			t.Fatalf("klt = %q, want %q", got, "5")
+		}
+		if got := req.URL.Query().Get("lmt"); got != "1" {
+			t.Fatalf("lmt = %q, want %q", got, "1")
+		}
+
+		return newHTTPResponse(http.StatusOK, map[string]string{
+			"Content-Type": "application/json",
+		}, []byte(`{"rc":0,"data":{"klines":["2026-04-29 09:35,10.10,10.30,10.40,10.00,1000,2000,1.00,10.00,0.00,0.00"]}}`)), nil
+	})
+
+	items, err := source.ListKLines(context.Background(), datasource.KLineQuery{
+		TSCode:   "000001.SZ",
+		Interval: datasource.Interval5Min,
+		Limit:    1,
+	})
+	if err != nil {
+		t.Fatalf("ListKLines() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("len(items) = %d, want %d", len(items), 1)
+	}
+	if !items[0].Close.Equal(decimal.RequireFromString("10.30")) {
+		t.Fatalf("items[0].Close = %s, want 10.30", items[0].Close)
+	}
+	if got := items[0].TradeTime; !got.Equal(time.Date(2026, 4, 29, 1, 35, 0, 0, time.UTC)) {
+		t.Fatalf("items[0].TradeTime = %s, want %s", got, time.Date(2026, 4, 29, 1, 35, 0, 0, time.UTC))
+	}
+}
+
+func TestSourceListKLinesFormatsMinuteBoundaryInChinaMarketTime(t *testing.T) {
+	t.Parallel()
+
+	source := newTestSource(func(req *http.Request) (*http.Response, error) {
+		if got := req.URL.Query().Get("end"); got != "2026-04-29 09:35:00" {
+			t.Fatalf("end = %q, want %q", got, "2026-04-29 09:35:00")
+		}
+
+		return newHTTPResponse(http.StatusOK, map[string]string{
+			"Content-Type": "application/json",
+		}, []byte(`{"rc":0,"data":{"klines":["2026-04-29 09:35,10.10,10.30,10.40,10.00,1000,2000,1.00,10.00,0.00,0.00"]}}`)), nil
+	})
+
+	cst := time.FixedZone("CST", 8*3600)
+	_, err := source.ListKLines(context.Background(), datasource.KLineQuery{
+		TSCode:   "000001.SZ",
+		Interval: datasource.Interval5Min,
+		EndTime:  time.Date(2026, 4, 29, 9, 35, 0, 0, cst),
+		Limit:    1,
+	})
+	if err != nil {
+		t.Fatalf("ListKLines() error = %v", err)
+	}
+}
+
+func TestSourceListKLinesRejectsEmptyTSCode(t *testing.T) {
+	t.Parallel()
+
+	source := newTestSource(func(req *http.Request) (*http.Response, error) {
+		t.Fatal("unexpected request for invalid query")
+		return nil, nil
+	})
+
+	_, err := source.ListKLines(context.Background(), datasource.KLineQuery{
+		Interval: datasource.IntervalDay,
+		Limit:    1,
+	})
+	if err == nil {
+		t.Fatal("ListKLines() error = nil, want non-nil")
+	}
+	if code := apperror.CodeOf(err); code != apperror.CodeBadRequest {
+		t.Fatalf("ListKLines() code = %d, want %d", code, apperror.CodeBadRequest)
+	}
+}
+
+func TestSourceListKLinesRejectsMalformedTSCode(t *testing.T) {
+	t.Parallel()
+
+	source := newTestSource(func(req *http.Request) (*http.Response, error) {
+		t.Fatal("unexpected request for invalid ts_code")
+		return nil, nil
+	})
+
+	_, err := source.ListKLines(context.Background(), datasource.KLineQuery{
+		TSCode:   "000001",
+		Interval: datasource.IntervalDay,
+		Limit:    1,
+	})
+	if err == nil {
+		t.Fatal("ListKLines() error = nil, want non-nil")
+	}
+	if code := apperror.CodeOf(err); code != apperror.CodeBadRequest {
+		t.Fatalf("ListKLines() code = %d, want %d", code, apperror.CodeBadRequest)
+	}
+}
+
+func TestSourceListKLinesRejectsUnsupportedIntervalValue(t *testing.T) {
+	t.Parallel()
+
+	source := newTestSource(func(req *http.Request) (*http.Response, error) {
+		t.Fatal("unexpected request for unsupported interval")
+		return nil, nil
+	})
+
+	_, err := source.ListKLines(context.Background(), datasource.KLineQuery{
+		TSCode:   "000001.SZ",
+		Interval: datasource.Interval("2h"),
+		Limit:    1,
+	})
+	if err == nil {
+		t.Fatal("ListKLines() error = nil, want non-nil")
+	}
+	if code := apperror.CodeOf(err); code != apperror.CodeBadRequest {
+		t.Fatalf("ListKLines() code = %d, want %d", code, apperror.CodeBadRequest)
+	}
+}
+
+func TestSourceListKLinesPreservesLocalCalendarDateRange(t *testing.T) {
+	t.Parallel()
+
+	source := newTestSource(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != historyKLinePath {
+			t.Fatalf("request path = %q, want %q", req.URL.Path, historyKLinePath)
+		}
+		if got := req.URL.Query().Get("beg"); got != "20260429" {
+			t.Fatalf("beg = %q, want %q", got, "20260429")
+		}
+		if got := req.URL.Query().Get("end"); got != "20260429" {
+			t.Fatalf("end = %q, want %q", got, "20260429")
+		}
+
+		return newHTTPResponse(http.StatusOK, map[string]string{
+			"Content-Type": "application/json",
+		}, []byte(`{"rc":0,"data":{"klines":["2026-04-29,10.10,10.30,10.40,10.00,1000,2000,1.00,10.00,0.00,0.00"]}}`)), nil
+	})
+
+	cst := time.FixedZone("CST", 8*3600)
+	items, err := source.ListKLines(context.Background(), datasource.KLineQuery{
+		TSCode:    "000001.SZ",
+		Interval:  datasource.IntervalDay,
+		StartTime: time.Date(2026, 4, 29, 0, 0, 0, 0, cst),
+		EndTime:   time.Date(2026, 4, 29, 0, 0, 0, 0, cst),
+	})
+	if err != nil {
+		t.Fatalf("ListKLines() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("len(items) = %d, want %d", len(items), 1)
+	}
+}
+
+func TestSourceStreamKLinesReturnsUnsupported(t *testing.T) {
+	t.Parallel()
+
+	source := newTestSource(func(req *http.Request) (*http.Response, error) {
+		t.Fatal("unexpected request for unsupported stream")
+		return nil, nil
+	})
+
+	_, err := source.StreamKLines(context.Background(), datasource.KLineQuery{
+		TSCode:   "000001.SZ",
+		Interval: datasource.IntervalDay,
+		Limit:    1,
+	})
+	if err == nil {
+		t.Fatal("StreamKLines() error = nil, want non-nil")
 	}
 }
 

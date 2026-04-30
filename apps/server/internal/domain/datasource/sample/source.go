@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/shopspring/decimal"
 
 	"github.com/lifei6671/quantsage/apps/server/internal/domain/datasource"
+	"github.com/lifei6671/quantsage/apps/server/internal/pkg/apperror"
 )
 
 type stockBasicRecord struct {
@@ -218,6 +220,50 @@ func (s *Source) ListDailyBars(ctx context.Context, startDate, endDate time.Time
 	return items, nil
 }
 
+// ListKLines 返回样例数据源支持的日线单票查询结果。
+func (s *Source) ListKLines(ctx context.Context, query datasource.KLineQuery) ([]datasource.KLine, error) {
+	normalizedQuery, err := datasource.NormalizeKLineQuery(query, time.Now)
+	if err != nil {
+		return nil, err
+	}
+	if normalizedQuery.Interval != datasource.IntervalDay {
+		return nil, apperror.New(
+			apperror.CodeDatasourceUnavailable,
+			fmt.Errorf("sample datasource does not support interval %s", normalizedQuery.Interval),
+		)
+	}
+
+	bars, err := s.ListDailyBars(ctx, time.Time{}, queryEndForSampleKLine(normalizedQuery))
+	if err != nil {
+		return nil, fmt.Errorf("list sample klines: %w", err)
+	}
+
+	items := make([]datasource.KLine, 0, len(bars))
+	for _, bar := range bars {
+		if bar.TSCode != normalizedQuery.TSCode {
+			continue
+		}
+		if !normalizedQuery.StartTime.IsZero() && (bar.TradeDate.Before(normalizedQuery.StartTime) || bar.TradeDate.After(normalizedQuery.EndTime)) {
+			continue
+		}
+		if normalizedQuery.Limit > 0 && bar.TradeDate.After(normalizeDate(normalizedQuery.EndTime)) {
+			continue
+		}
+		items = append(items, mapDailyBarToKLine(bar))
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].TradeTime.Before(items[j].TradeTime)
+	})
+
+	return datasource.TrimKLinesByLimit(items, normalizedQuery.Limit), nil
+}
+
+// StreamKLines 当前样例数据源不支持流式 K 线接口。
+func (s *Source) StreamKLines(context.Context, datasource.KLineQuery) (<-chan datasource.KLineStreamItem, error) {
+	return nil, datasource.UnsupportedStreamError("sample")
+}
+
 func readJSON(path string, target any) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -241,4 +287,29 @@ func normalizeDate(value time.Time) time.Time {
 
 	utcValue := value.UTC()
 	return time.Date(utcValue.Year(), utcValue.Month(), utcValue.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+func mapDailyBarToKLine(bar datasource.DailyBar) datasource.KLine {
+	return datasource.KLine{
+		TSCode:    bar.TSCode,
+		TradeTime: bar.TradeDate,
+		Open:      bar.Open,
+		High:      bar.High,
+		Low:       bar.Low,
+		Close:     bar.Close,
+		PreClose:  bar.PreClose,
+		Change:    bar.Change,
+		PctChg:    bar.PctChg,
+		Vol:       bar.Vol,
+		Amount:    bar.Amount,
+		Source:    bar.Source,
+	}
+}
+
+func queryEndForSampleKLine(query datasource.KLineQuery) time.Time {
+	if query.EndTime.IsZero() {
+		return time.Time{}
+	}
+
+	return normalizeDate(query.EndTime)
 }

@@ -3,10 +3,12 @@ package browserfetch
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
 )
 
@@ -231,6 +233,359 @@ func TestFetchCookieHeaderRefetchesAfterCacheExpiry(t *testing.T) {
 
 	if fetchCalls != 2 {
 		t.Fatalf("fetchCalls = %d, want %d", fetchCalls, 2)
+	}
+}
+
+func TestObserveResponsesEmitsMatchedBodiesAndStopsOnIdle(t *testing.T) {
+	stubObserveHooks(t)
+
+	var listener func(any)
+	listenerReady := make(chan struct{}, 1)
+	listenTargetFunc = func(_ context.Context, fn func(any)) {
+		listener = fn
+		listenerReady <- struct{}{}
+	}
+	getResponseBodyFunc = func(_ context.Context, requestID network.RequestID) ([]byte, error) {
+		if requestID != network.RequestID("req-1") {
+			t.Fatalf("requestID = %q, want %q", requestID, "req-1")
+		}
+		return []byte(`{"ok":true}`), nil
+	}
+
+	stream, err := New(Config{}).ObserveResponses(
+		context.Background(),
+		"https://quote.example.com/stock/000001",
+		WithObserveIdleTimeout(10*time.Millisecond),
+		WithObserveURLContains("/stock/kline"),
+		WithObserveResourceTypes(network.ResourceTypeXHR, network.ResourceTypeFetch),
+	)
+	if err != nil {
+		t.Fatalf("ObserveResponses() error = %v", err)
+	}
+
+	select {
+	case <-listenerReady:
+	case <-time.After(time.Second):
+		t.Fatal("listener was not registered")
+	}
+	if listener == nil {
+		t.Fatal("listener = nil, want non-nil after registration")
+	}
+
+	listener(&network.EventResponseReceived{
+		RequestID: network.RequestID("req-1"),
+		Type:      network.ResourceTypeXHR,
+		Response: &network.Response{
+			URL:      "https://api.example.com/stock/kline",
+			Status:   200,
+			MimeType: "application/json",
+		},
+	})
+	listener(&network.EventLoadingFinished{RequestID: network.RequestID("req-1")})
+
+	select {
+	case item := <-stream.Responses:
+		if got := string(item.Body); got != `{"ok":true}` {
+			t.Fatalf("item.Body = %q, want %q", got, `{"ok":true}`)
+		}
+		if item.URL != "https://api.example.com/stock/kline" {
+			t.Fatalf("item.URL = %q, want %q", item.URL, "https://api.example.com/stock/kline")
+		}
+		if item.Err != nil {
+			t.Fatalf("item.Err = %v, want nil", item.Err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("did not receive observed response item")
+	}
+
+	select {
+	case err := <-stream.Done:
+		if err != nil {
+			t.Fatalf("stream.Done = %v, want nil", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("stream did not stop after idle timeout")
+	}
+}
+
+func TestObserveResponsesSkipsNonMatchingResponses(t *testing.T) {
+	stubObserveHooks(t)
+
+	var listener func(any)
+	listenerReady := make(chan struct{}, 1)
+	listenTargetFunc = func(_ context.Context, fn func(any)) {
+		listener = fn
+		listenerReady <- struct{}{}
+	}
+	getResponseBodyFunc = func(context.Context, network.RequestID) ([]byte, error) {
+		t.Fatal("getResponseBodyFunc called for non-matching response")
+		return nil, nil
+	}
+
+	stream, err := New(Config{}).ObserveResponses(
+		context.Background(),
+		"https://quote.example.com/stock/000001",
+		WithObserveIdleTimeout(10*time.Millisecond),
+		WithObserveURLContains("/stock/kline"),
+	)
+	if err != nil {
+		t.Fatalf("ObserveResponses() error = %v", err)
+	}
+
+	select {
+	case <-listenerReady:
+	case <-time.After(time.Second):
+		t.Fatal("listener was not registered")
+	}
+	if listener == nil {
+		t.Fatal("listener = nil, want non-nil after registration")
+	}
+
+	listener(&network.EventResponseReceived{
+		RequestID: network.RequestID("req-2"),
+		Type:      network.ResourceTypeXHR,
+		Response: &network.Response{
+			URL:      "https://api.example.com/other",
+			Status:   200,
+			MimeType: "application/json",
+		},
+	})
+	listener(&network.EventLoadingFinished{RequestID: network.RequestID("req-2")})
+
+	select {
+	case item, ok := <-stream.Responses:
+		if ok {
+			t.Fatalf("unexpected response item: %+v", item)
+		}
+	case err := <-stream.Done:
+		if !errors.Is(err, errObserveNoMatchingResponse) {
+			t.Fatalf("stream.Done = %v, want %v", err, errObserveNoMatchingResponse)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("stream did not stop after idle timeout")
+	}
+}
+
+func TestObserveResponsesDoesNotTimeOutBeforePageReady(t *testing.T) {
+	stubObserveHooks(t)
+
+	var listener func(any)
+	listenerReady := make(chan struct{}, 1)
+	listenTargetFunc = func(_ context.Context, fn func(any)) {
+		listener = fn
+		listenerReady <- struct{}{}
+	}
+	runBlocked := make(chan struct{})
+	releaseRun := make(chan struct{})
+	runActionsFunc = func(context.Context, ...chromedp.Action) error {
+		close(runBlocked)
+		<-releaseRun
+		return nil
+	}
+	getResponseBodyFunc = func(_ context.Context, requestID network.RequestID) ([]byte, error) {
+		if requestID != network.RequestID("req-delayed") {
+			t.Fatalf("requestID = %q, want %q", requestID, "req-delayed")
+		}
+		return []byte(`{"ok":"delayed"}`), nil
+	}
+
+	stream, err := New(Config{}).ObserveResponses(
+		context.Background(),
+		"https://quote.example.com/stock/000001",
+		WithObserveIdleTimeout(10*time.Millisecond),
+		WithObserveURLContains("/stock/kline"),
+	)
+	if err != nil {
+		t.Fatalf("ObserveResponses() error = %v", err)
+	}
+
+	select {
+	case <-listenerReady:
+	case <-time.After(time.Second):
+		t.Fatal("listener was not registered")
+	}
+	select {
+	case <-runBlocked:
+	case <-time.After(time.Second):
+		t.Fatal("runActions was not blocked")
+	}
+
+	select {
+	case err := <-stream.Done:
+		t.Fatalf("stream.Done = %v, want no timeout before page ready", err)
+	case <-time.After(30 * time.Millisecond):
+	}
+
+	listener(&network.EventResponseReceived{
+		RequestID: network.RequestID("req-delayed"),
+		Type:      network.ResourceTypeScript,
+		Response: &network.Response{
+			URL:      "https://api.example.com/stock/kline",
+			Status:   200,
+			MimeType: "application/javascript",
+		},
+	})
+	listener(&network.EventLoadingFinished{RequestID: network.RequestID("req-delayed")})
+	close(releaseRun)
+
+	select {
+	case item := <-stream.Responses:
+		if got := string(item.Body); got != `{"ok":"delayed"}` {
+			t.Fatalf("item.Body = %q, want %q", got, `{"ok":"delayed"}`)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("did not receive delayed observed response item")
+	}
+
+	select {
+	case err := <-stream.Done:
+		if err != nil {
+			t.Fatalf("stream.Done = %v, want nil", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("stream did not stop after idle timeout once page became ready")
+	}
+}
+
+func TestObserveResponsesWaitsForBodyWorkersBeforeClosingStreamOnRunError(t *testing.T) {
+	stubObserveHooks(t)
+
+	var listener func(any)
+	listenerReady := make(chan struct{}, 1)
+	listenTargetFunc = func(_ context.Context, fn func(any)) {
+		listener = fn
+		listenerReady <- struct{}{}
+	}
+
+	bodyStarted := make(chan struct{}, 1)
+	releaseBody := make(chan struct{})
+	getResponseBodyFunc = func(_ context.Context, requestID network.RequestID) ([]byte, error) {
+		if requestID != network.RequestID("req-run-error") {
+			t.Fatalf("requestID = %q, want %q", requestID, "req-run-error")
+		}
+		bodyStarted <- struct{}{}
+		<-releaseBody
+		return []byte(`{"ok":"late"}`), nil
+	}
+	runActionsFunc = func(context.Context, ...chromedp.Action) error {
+		select {
+		case <-listenerReady:
+		case <-time.After(time.Second):
+			return errors.New("listener was not registered")
+		}
+
+		listener(&network.EventResponseReceived{
+			RequestID: network.RequestID("req-run-error"),
+			Type:      network.ResourceTypeXHR,
+			Response: &network.Response{
+				URL:      "https://api.example.com/stock/kline",
+				Status:   200,
+				MimeType: "application/json",
+			},
+		})
+		listener(&network.EventLoadingFinished{RequestID: network.RequestID("req-run-error")})
+
+		return errors.New("run failed")
+	}
+
+	stream, err := New(Config{}).ObserveResponses(
+		context.Background(),
+		"https://quote.example.com/stock/000001",
+		WithObserveIdleTimeout(time.Second),
+		WithObserveURLContains("/stock/kline"),
+		WithObserveResourceTypes(network.ResourceTypeXHR),
+	)
+	if err != nil {
+		t.Fatalf("ObserveResponses() error = %v", err)
+	}
+
+	select {
+	case <-bodyStarted:
+	case <-time.After(time.Second):
+		t.Fatal("response body worker did not start")
+	}
+	close(releaseBody)
+
+	select {
+	case item := <-stream.Responses:
+		if got := string(item.Body); got != `{"ok":"late"}` {
+			t.Fatalf("item.Body = %q, want %q", got, `{"ok":"late"}`)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("did not receive observed response item before stream closed")
+	}
+
+	select {
+	case err := <-stream.Done:
+		if err == nil || !strings.Contains(err.Error(), "run failed") {
+			t.Fatalf("stream.Done = %v, want contains %q", err, "run failed")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("stream did not stop after run error")
+	}
+}
+
+func TestObserveResponsesWaitsForMatchingRequestToFinishBeforeIdleTimeout(t *testing.T) {
+	stubObserveHooks(t)
+
+	var listener func(any)
+	listenerReady := make(chan struct{}, 1)
+	listenTargetFunc = func(_ context.Context, fn func(any)) {
+		listener = fn
+		listenerReady <- struct{}{}
+	}
+	runBlocked := make(chan struct{})
+	releaseRun := make(chan struct{})
+	runActionsFunc = func(context.Context, ...chromedp.Action) error {
+		close(runBlocked)
+		<-releaseRun
+		return nil
+	}
+
+	stream, err := New(Config{}).ObserveResponses(
+		context.Background(),
+		"https://quote.example.com/stock/000001",
+		WithObserveIdleTimeout(10*time.Millisecond),
+		WithObserveURLContains("/stock/kline"),
+		WithObserveResourceTypes(network.ResourceTypeXHR),
+	)
+	if err != nil {
+		t.Fatalf("ObserveResponses() error = %v", err)
+	}
+
+	select {
+	case <-listenerReady:
+	case <-time.After(time.Second):
+		t.Fatal("listener was not registered")
+	}
+	select {
+	case <-runBlocked:
+	case <-time.After(time.Second):
+		t.Fatal("runActions was not blocked")
+	}
+
+	listener(&network.EventResponseReceived{
+		RequestID: network.RequestID("req-pending"),
+		Type:      network.ResourceTypeXHR,
+		Response: &network.Response{
+			URL:      "https://api.example.com/stock/kline",
+			Status:   200,
+			MimeType: "application/json",
+		},
+	})
+	close(releaseRun)
+
+	select {
+	case err := <-stream.Done:
+		t.Fatalf("stream.Done = %v, want still waiting for matching request", err)
+	case <-time.After(30 * time.Millisecond):
+	}
+
+	stream.Close()
+	select {
+	case <-stream.Done:
+	case <-time.After(time.Second):
+		t.Fatal("stream did not stop after close")
 	}
 }
 
@@ -661,4 +1016,22 @@ func stubBrowserProcessHooks(t *testing.T) *browserHookRestore {
 	})
 
 	return restore
+}
+
+func stubObserveHooks(t *testing.T) {
+	t.Helper()
+
+	stubBrowserProcessHooks(t)
+
+	originalListen := listenTargetFunc
+	originalGetResponseBody := getResponseBodyFunc
+	listenTargetFunc = func(context.Context, func(any)) {}
+	getResponseBodyFunc = func(context.Context, network.RequestID) ([]byte, error) {
+		return nil, nil
+	}
+
+	t.Cleanup(func() {
+		listenTargetFunc = originalListen
+		getResponseBodyFunc = originalGetResponseBody
+	})
 }

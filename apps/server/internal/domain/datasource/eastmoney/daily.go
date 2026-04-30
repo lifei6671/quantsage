@@ -2,9 +2,7 @@ package eastmoney
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -53,38 +51,23 @@ func (s *Source) ListDailyBars(ctx context.Context, startDate, endDate time.Time
 }
 
 func (s *Source) listDailyBarsByTSCode(ctx context.Context, tsCode string, startDate, endDate time.Time) ([]datasource.DailyBar, error) {
-	secID, err := ConvertTSCodeToSecID(tsCode)
-	if err != nil {
-		return nil, datasourceUnavailable(fmt.Errorf("convert ts_code %s to secid: %w", tsCode, err))
-	}
-
-	body, err := s.fallbackClient.GetHistory(ctx, historyKLinePath, buildKLineQuery(secID, IntervalDay, AdjustNone, startDate, endDate, 0))
+	items, err := s.ListKLines(ctx, datasource.KLineQuery{
+		TSCode:    tsCode,
+		Interval:  datasource.IntervalDay,
+		StartTime: startDate,
+		EndTime:   endDate,
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	var response KLineAPIResponse
-	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, datasourceUnavailable(fmt.Errorf("decode eastmoney daily response: %w", err))
-	}
-	if response.RC != 0 {
-		return nil, datasourceUnavailable(
-			fmt.Errorf("eastmoney daily rc=%d message=%q", response.RC, strings.TrimSpace(response.Message)),
-		)
-	}
-
-	parsed, err := ParseKLineRows(tsCode, IntervalDay, response.Data.KLines)
-	if err != nil {
-		return nil, datasourceUnavailable(fmt.Errorf("parse eastmoney daily rows: %w", err))
-	}
-
-	items := make([]datasource.DailyBar, 0, len(parsed))
-	for _, item := range parsed {
+	result := make([]datasource.DailyBar, 0, len(items))
+	for _, item := range items {
 		tradeDate := normalizeDate(item.TradeTime)
 		if tradeDate.Before(startDate) || tradeDate.After(endDate) {
 			continue
 		}
-		items = append(items, datasource.DailyBar{
+		result = append(result, datasource.DailyBar{
 			TSCode:    tsCode,
 			TradeDate: tradeDate,
 			Open:      item.Open,
@@ -100,5 +83,5 @@ func (s *Source) listDailyBarsByTSCode(ctx context.Context, tsCode string, start
 		})
 	}
 
-	return items, nil
+	return result, nil
 }

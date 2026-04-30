@@ -2,10 +2,8 @@ package eastmoney
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +20,8 @@ const (
 	defaultQueryLimit       = 120
 	defaultBatchConcurrency = 8
 )
+
+var chinaMarketQueryTimeZone = time.FixedZone("Asia/Shanghai", 8*3600)
 
 type Interval = datasourceeastmoney.Interval
 
@@ -120,43 +120,18 @@ func (s *service) ListKLines(ctx context.Context, query Query) ([]KLine, error) 
 		return nil, err
 	}
 
-	secID, err := datasourceeastmoney.ConvertTSCodeToSecID(normalizedQuery.TSCode)
-	if err != nil {
-		return nil, apperror.New(apperror.CodeBadRequest, fmt.Errorf("convert ts_code to secid: %w", err))
-	}
-	klt, err := datasourceeastmoney.MapIntervalToEastMoneyKLT(normalizedQuery.Interval)
-	if err != nil {
-		return nil, apperror.New(apperror.CodeBadRequest, fmt.Errorf("map interval: %w", err))
-	}
-
-	body, err := s.client.GetHistory(ctx, "/api/qt/stock/kline/get", url.Values{
-		"secid":   []string{secID},
-		"klt":     []string{klt},
-		"fqt":     []string{datasourceeastmoney.MapAdjustType(normalizedQuery.Adjust)},
-		"fields1": []string{"f1,f2,f3,f4,f5,f6"},
-		"fields2": []string{"f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61"},
-		"beg":     []string{"0"},
-		"end":     []string{formatQueryEnd(normalizedQuery.Interval, normalizedQuery.EndTime)},
-		"lmt":     []string{fmt.Sprintf("%d", normalizedQuery.Limit)},
-	})
+	parsed, err := datasourceeastmoney.FetchParsedKLinesForMarketdata(
+		ctx,
+		s.client,
+		normalizedQuery.TSCode,
+		normalizedQuery.Interval,
+		normalizedQuery.Adjust,
+		time.Time{},
+		normalizedQuery.EndTime,
+		normalizedQuery.Limit,
+	)
 	if err != nil {
 		return nil, err
-	}
-
-	var response datasourceeastmoney.KLineAPIResponse
-	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, apperror.New(apperror.CodeDatasourceUnavailable, fmt.Errorf("decode eastmoney kline response: %w", err))
-	}
-	if response.RC != 0 {
-		return nil, apperror.New(
-			apperror.CodeDatasourceUnavailable,
-			fmt.Errorf("eastmoney kline rc=%d message=%q", response.RC, strings.TrimSpace(response.Message)),
-		)
-	}
-
-	parsed, err := datasourceeastmoney.ParseKLineRows(normalizedQuery.TSCode, normalizedQuery.Interval, response.Data.KLines)
-	if err != nil {
-		return nil, apperror.New(apperror.CodeDatasourceUnavailable, fmt.Errorf("parse eastmoney kline rows: %w", err))
 	}
 
 	items := make([]KLine, 0, len(parsed))
@@ -280,29 +255,41 @@ func normalizeQuery(query Query) (Query, error) {
 		query.Limit = defaultQueryLimit
 	}
 	if query.EndTime.IsZero() {
-		query.EndTime = time.Now().UTC()
+		query.EndTime = currentMarketQueryBoundary(query.Interval, time.Now())
 	} else {
-		query.EndTime = query.EndTime.UTC()
+		query.EndTime = alignQueryBoundary(query.Interval, query.EndTime)
 	}
 
 	return query, nil
 }
 
-func formatQueryEnd(interval Interval, value time.Time) string {
+func alignQueryBoundary(interval Interval, value time.Time) time.Time {
 	if value.IsZero() {
-		return "20500101"
+		return time.Time{}
+	}
+	if usesCalendarQueryBoundary(interval) {
+		year, month, day := value.Date()
+		return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
 	}
 
-	if isMinuteInterval(interval) {
-		return value.UTC().Format("2006-01-02 15:04:05")
-	}
-
-	return value.UTC().Format("20060102")
+	return value.UTC()
 }
 
-func isMinuteInterval(interval Interval) bool {
+func currentMarketQueryBoundary(interval Interval, value time.Time) time.Time {
+	if value.IsZero() {
+		return time.Time{}
+	}
+	if usesCalendarQueryBoundary(interval) {
+		year, month, day := value.In(chinaMarketQueryTimeZone).Date()
+		return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+	}
+
+	return value.UTC()
+}
+
+func usesCalendarQueryBoundary(interval Interval) bool {
 	switch interval {
-	case Interval1Min, Interval5Min, Interval15Min, Interval30Min, Interval60Min:
+	case IntervalDay, IntervalWeek, IntervalMonth, IntervalQuarter, IntervalYear:
 		return true
 	default:
 		return false

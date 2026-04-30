@@ -17,6 +17,7 @@ import (
 type Runner interface {
 	FetchCookieHeader(ctx context.Context, pageURL string) (string, error)
 	Run(ctx context.Context, pageURL string, opts ...RunOption) error
+	ObserveResponses(ctx context.Context, pageURL string, opts ...ObserveOption) (*ResponseStream, error)
 	Close(ctx context.Context) error
 	InvalidateCookies()
 }
@@ -121,6 +122,10 @@ var startBrowserProcessFunc = startBrowserProcess
 var closeBrowserProcessFunc = closeBrowserProcess
 var newTabContextFunc = chromedp.NewContext
 var runActionsFunc = chromedp.Run
+var listenTargetFunc = chromedp.ListenTarget
+var getResponseBodyFunc = func(ctx context.Context, requestID network.RequestID) ([]byte, error) {
+	return network.GetResponseBody(requestID).Do(ctx)
+}
 
 // New 创建一个基础浏览器 Runner。
 func New(cfg Config) Runner {
@@ -312,6 +317,17 @@ func runPage(ctx context.Context, r *runner, cfg normalizedConfig, pageURL strin
 }
 
 func (r *runner) runInTab(ctx context.Context, cfg normalizedConfig, pageURL string, buildActions func(string) []chromedp.Action) error {
+	return r.runInTabWithHooks(ctx, cfg, pageURL, buildActions, nil, nil)
+}
+
+func (r *runner) runInTabWithHooks(
+	ctx context.Context,
+	cfg normalizedConfig,
+	pageURL string,
+	buildActions func(string) []chromedp.Action,
+	setup func(tabCtx context.Context, runCtx context.Context) error,
+	afterRun func(tabCtx context.Context, runCtx context.Context) error,
+) error {
 	if r == nil {
 		return fmt.Errorf("run browser tab: runner is nil")
 	}
@@ -360,8 +376,18 @@ func (r *runner) runInTab(ctx context.Context, cfg normalizedConfig, pageURL str
 		defer runCancel()
 	}
 
+	if setup != nil {
+		if err := setup(tabCtx, runCtx); err != nil {
+			return err
+		}
+	}
 	if err := runActionsFunc(runCtx, buildActions(pageURL)...); err != nil {
 		return fmt.Errorf("run browser for %s: %w", pageURL, err)
+	}
+	if afterRun != nil {
+		if err := afterRun(tabCtx, runCtx); err != nil {
+			return err
+		}
 	}
 
 	return nil

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -48,6 +47,51 @@ func TestServiceListKLinesMapsRows(t *testing.T) {
 	}
 	if !items[1].Close.Equal(decimal.RequireFromString("10.40")) || !items[1].TurnoverRate.Equal(decimal.RequireFromString("0.60")) {
 		t.Fatalf("items[1] = %+v, want mapped minute kline", items[1])
+	}
+	if got := items[1].TradeTime; !got.Equal(time.Date(2026, 4, 29, 1, 35, 0, 0, time.UTC)) {
+		t.Fatalf("items[1].TradeTime = %s, want %s", got, time.Date(2026, 4, 29, 1, 35, 0, 0, time.UTC))
+	}
+}
+
+func TestServiceListKLinesPreservesLocalCalendarEndDate(t *testing.T) {
+	t.Parallel()
+
+	service := newTestService(func(ctx context.Context, path string, query url.Values) ([]byte, error) {
+		if got := query.Get("end"); got != "20260429" {
+			t.Fatalf("end = %q, want %q", got, "20260429")
+		}
+		if got := query.Get("beg"); got != "0" {
+			t.Fatalf("beg = %q, want %q", got, "0")
+		}
+
+		return []byte(`{"rc":0,"data":{"klines":["2026-04-29,10.10,10.20,10.30,10.00,1000,10000,2.0,1.00,0.10,0.50"]}}`), nil
+	})
+
+	cst := time.FixedZone("CST", 8*3600)
+	items, err := service.ListKLines(context.Background(), Query{
+		TSCode:   "000001.SZ",
+		Interval: IntervalDay,
+		Limit:    1,
+		EndTime:  time.Date(2026, 4, 29, 0, 0, 0, 0, cst),
+	})
+	if err != nil {
+		t.Fatalf("ListKLines() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("len(items) = %d, want %d", len(items), 1)
+	}
+}
+
+func TestCurrentMarketQueryBoundaryUsesChinaMarketDateForDayInterval(t *testing.T) {
+	t.Parallel()
+
+	got := currentMarketQueryBoundary(
+		IntervalDay,
+		time.Date(2026, 4, 28, 20, 30, 0, 0, time.UTC),
+	)
+	want := time.Date(2026, 4, 29, 0, 0, 0, 0, time.UTC)
+	if !got.Equal(want) {
+		t.Fatalf("currentMarketQueryBoundary() = %s, want %s", got, want)
 	}
 }
 
@@ -103,21 +147,16 @@ func TestServiceListKLinesAutoFallsBackAfterHTMLAntiBot(t *testing.T) {
 func TestNewFromClientConfigUsesHTTPOnlyHistoryClient(t *testing.T) {
 	t.Parallel()
 
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte("<html><body>security check</body></html>"))
-	}))
-	t.Cleanup(server.Close)
-
-	service := NewFromClientConfig(datasourceeastmoney.ClientConfig{
-		Endpoint:      server.URL,
-		QuoteEndpoint: server.URL,
-		Timeout:       5 * time.Second,
-		MaxRetries:    0,
-		UserAgentMode: "stable",
-	})
+	requester := &stubHistoryRequester{
+		historyResponses: []stubHistoryResponse{
+			{err: apperror.New(apperror.CodeDatasourceUnavailable, fmt.Errorf("call eastmoney %s: html or anti-bot response", "/api/qt/stock/kline/get"))},
+		},
+	}
+	service := newServiceWithClient(datasourceeastmoney.NewHistoryClientWithFallback(
+		requester,
+		nil,
+		datasourceeastmoney.FallbackConfig{Mode: datasourceeastmoney.FetchModeHTTP},
+	))
 
 	_, err := service.ListKLines(context.Background(), Query{
 		TSCode:  "000001.SZ",
@@ -130,8 +169,8 @@ func TestNewFromClientConfigUsesHTTPOnlyHistoryClient(t *testing.T) {
 	if !strings.Contains(err.Error(), "html or anti-bot response") {
 		t.Fatalf("error = %q, want contains %q", err.Error(), "html or anti-bot response")
 	}
-	if requests != 1 {
-		t.Fatalf("requests = %d, want %d because HTTP-only constructor should not trigger retry fallback", requests, 1)
+	if len(requester.historyCalls) != 1 {
+		t.Fatalf("history calls = %d, want %d because HTTP-only path should not trigger retry fallback", len(requester.historyCalls), 1)
 	}
 }
 
@@ -291,6 +330,47 @@ func TestNormalizeQueryRejectsMissingTSCode(t *testing.T) {
 	_, err := normalizeQuery(Query{})
 	if err == nil {
 		t.Fatal("normalizeQuery() error = nil, want non-nil")
+	}
+	if apperror.CodeOf(err) != apperror.CodeBadRequest {
+		t.Fatalf("CodeOf(error) = %d, want %d", apperror.CodeOf(err), apperror.CodeBadRequest)
+	}
+}
+
+func TestServiceListKLinesRejectsMalformedTSCode(t *testing.T) {
+	t.Parallel()
+
+	service := newTestService(func(ctx context.Context, path string, query url.Values) ([]byte, error) {
+		t.Fatal("transport should not be called for malformed ts_code")
+		return nil, nil
+	})
+
+	_, err := service.ListKLines(context.Background(), Query{
+		TSCode: "000001",
+		Limit:  1,
+	})
+	if err == nil {
+		t.Fatal("ListKLines() error = nil, want non-nil")
+	}
+	if apperror.CodeOf(err) != apperror.CodeBadRequest {
+		t.Fatalf("CodeOf(error) = %d, want %d", apperror.CodeOf(err), apperror.CodeBadRequest)
+	}
+}
+
+func TestServiceListKLinesRejectsUnsupportedIntervalValue(t *testing.T) {
+	t.Parallel()
+
+	service := newTestService(func(ctx context.Context, path string, query url.Values) ([]byte, error) {
+		t.Fatal("transport should not be called for unsupported interval")
+		return nil, nil
+	})
+
+	_, err := service.ListKLines(context.Background(), Query{
+		TSCode:   "000001.SZ",
+		Interval: Interval("2h"),
+		Limit:    1,
+	})
+	if err == nil {
+		t.Fatal("ListKLines() error = nil, want non-nil")
 	}
 	if apperror.CodeOf(err) != apperror.CodeBadRequest {
 		t.Fatalf("CodeOf(error) = %d, want %d", apperror.CodeOf(err), apperror.CodeBadRequest)
